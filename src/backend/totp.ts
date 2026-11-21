@@ -10,9 +10,12 @@ export interface TOTPConfig {
 }
 
 /**
- * Generate a TOTP code from a config.
+ * Generate a TOTP code from a config. `at` (unix seconds) is optional and
+ * used by tests for RFC 6238 vectors; production paths omit it (now).
  */
-export function generateTOTPCode(config: TOTPConfig): string {
+export function generateTOTPCode(
+  config: TOTPConfig & { at?: number },
+): string {
   const totp = new OTPAuth.TOTP({
     issuer: config.issuer,
     label: config.label,
@@ -21,7 +24,7 @@ export function generateTOTPCode(config: TOTPConfig): string {
     period: config.period,
     secret: OTPAuth.Secret.fromBase32(config.secret),
   });
-  return totp.generate();
+  return totp.generate({ timestamp: (config.at ?? undefined) !== undefined ? config.at! * 1000 : undefined });
 }
 
 /**

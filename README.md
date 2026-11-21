@@ -77,3 +77,5 @@ Trust boundaries:
 
 See `DECISIONS.md` for the reasoning log and `SECURITY.md` for the threat
 model. `docs/INTEROP.md` is the cross-client compatibility checklist.
+`TODO.md` is the short-term working list (what to polish and verify next);
+`ROADMAP.md` holds the longer phases.

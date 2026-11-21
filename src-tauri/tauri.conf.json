@@ -19,7 +19,7 @@
         "minWidth": 960,
         "minHeight": 640,
         "center": true,
-        "contentProtection": true
+        "contentProtected": true
       }
     ],
     "security": {
@@ -30,7 +30,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi", "dmg", "app", "updater"],
+    "targets": ["nsis", "msi", "dmg", "app"],
     "category": "DeveloperTool",
     "icon": [
       "icons/32x32.png",

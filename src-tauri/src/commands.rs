@@ -5,6 +5,7 @@ use crate::settings::{self, Settings};
 use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
 use crate::{MAIN_WINDOW, QUICK_WINDOW};
@@ -95,9 +96,9 @@ pub fn toggle_quick(app: AppHandle) {
                 let mp = m.position();
                 let ms = m.size();
                 pos.x >= mp.x as f64
-                    && pos.x < (mp.x + ms.width) as f64
+                    && pos.x < mp.x as f64 + ms.width as f64
                     && pos.y >= mp.y as f64
-                    && pos.y < (mp.y + ms.height) as f64
+                    && pos.y < mp.y as f64 + ms.height as f64
             });
 
             if let Some(m) = target {
@@ -105,7 +106,7 @@ pub fn toggle_quick(app: AppHandle) {
                 let ms = m.size();
                 let window_w = 640.0;
                 let window_h = 460.0;
-                let scale = m.scale_factor().unwrap_or(1.0);
+                let scale = m.scale_factor();
                 let x = mp.x as f64 + (ms.width as f64 / scale - window_w) / 2.0;
                 let y = mp.y as f64 + (ms.height as f64 / scale - window_h) * 0.3;
                 let _ = quick.set_position(tauri::PhysicalPosition::new(x.max(0.0), y.max(0.0)));

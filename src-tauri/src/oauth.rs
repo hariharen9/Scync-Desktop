@@ -9,7 +9,7 @@
 
 use rand::RngCore;
 use sha2::{Digest, Sha256};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 
 /// Tokens returned from the Google token endpoint.
@@ -226,6 +226,7 @@ pub fn run_loopback_sign_in(
     let mut reader = BufReader::new(&stream);
     let mut request_line = String::new();
     reader.read_line(&mut request_line).map_err(|e| e.to_string())?;
+    drop(reader);
     let path = request_line.split_whitespace().nth(1).unwrap_or("");
     let query = path.split_once('?').map(|(_, q)| q).unwrap_or("");
 
@@ -248,7 +249,6 @@ pub fn run_loopback_sign_in(
     // the browser is not left hanging.
     write_response(&stream, 200, SUCCESS_HTML);
     drop(stream);
-    drop(reader);
     drop(listener);
 
     exchange_code(
@@ -391,9 +391,11 @@ mod tests {
         assert_eq!(base64url_encode(b"foob"), "Zm9vYg");
         assert_eq!(base64url_encode(b"fooba"), "Zm9vYmE");
         assert_eq!(base64url_encode(b"foobar"), "Zm9vYmFy");
-        // Bytes that differ between base64 and base64url alphabets:
-        // 0xFB 0xEF 0xBE → standard "+/+/..." characters become "-" / "_".
-        assert_eq!(base64url_encode(&[251, 239, 190]), "--_-");
+        // Bytes that map to alphabet indices 62 ('+' → '-') and 63 ('/' → '_'):
+        // 0xFB 0xEF 0xBE → index 62 in every group → "----".
+        assert_eq!(base64url_encode(&[251, 239, 190]), "----");
+        // 0xFB 0x1F → groups 62 ('-'), 49 ('x'), 60 ('8'); standard base64 gives "+x8".
+        assert_eq!(base64url_encode(&[251, 31]), "-x8");
     }
 
     #[test]

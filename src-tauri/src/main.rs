@@ -17,8 +17,7 @@ use tauri::{
     tray::TrayIconBuilder,
     Emitter, Manager, WebviewWindowBuilder, WindowEvent,
 };
-use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
+use tauri_plugin_autostart::MacosLauncher;
 
 pub const MAIN_WINDOW: &str = "main";
 pub const QUICK_WINDOW: &str = "quick";
@@ -26,7 +25,8 @@ pub const QUICK_WINDOW: &str = "quick";
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // Second launch: focus the main window instead.
+            // Second launch: recreate (if destroyed), then focus the main window.
+            commands::ensure_main_window(app);
             if let Some(win) = app.get_webview_window(MAIN_WINDOW) {
                 let _ = win.unminimize();
                 let _ = win.show();
@@ -112,12 +112,12 @@ fn main() {
                 .tooltip("Scync")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id().as_ref() {
-                    "open" => commands::show_main_window(app.clone()),
-                    "quick" => commands::toggle_quick(app.clone()),
+                    "open" => { let _ = commands::show_main_window(app.clone()); }
+                    "quick" => { let _ = commands::toggle_quick(app.clone()); }
                     "lock" => {
                         let _ = app.emit_to(MAIN_WINDOW, "tray:lock", ());
                     }
-                    "quit" => commands::quit_app(app.clone()),
+                    "quit" => { let _ = commands::quit_app(app.clone()); }
                     _ => {}
                 })
                 .build(app)?;

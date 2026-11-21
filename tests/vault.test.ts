@@ -67,6 +67,7 @@ describe('vault lock lifecycle', () => {
   });
 
   it('unlock with the wrong password increments attempts, stays locked', async () => {
+    const startedAt = Date.now();
     const ok = await useVaultStore.getState().unlock('wrong-password');
     expect(ok).toBe(false);
     const s = useVaultStore.getState();
@@ -74,7 +75,9 @@ describe('vault lock lifecycle', () => {
     expect(s.derivedKey).toBeNull();
     expect(s.failedAttempts).toBe(1);
     expect(s.error).toMatch(/incorrect/i);
-    expect(s.nextAttemptAllowedAt).toBe(Date.now()); // attempt 1 → no delay
+    // attempt 1 → no delay; allow for clock advance between attempt and assert
+    expect(s.nextAttemptAllowedAt).toBeGreaterThanOrEqual(startedAt);
+    expect(s.nextAttemptAllowedAt).toBeLessThanOrEqual(Date.now());
   });
 
   it('five failures set a future nextAttemptAllowedAt', async () => {

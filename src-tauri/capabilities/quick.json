@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "quick-capability",
+  "description": "Quick-search popup: metadata only, never plaintext. Only event APIs plus its own hide command — no clipboard, no fs, no settings.",
+  "local": true,
+  "windows": ["quick"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:allow-hide"
+  ]
+}

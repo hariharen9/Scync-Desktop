@@ -1,0 +1,63 @@
+//! Non-secret settings, persisted in the Tauri app-config directory
+//! (e.g. `%APPDATA%/space.scync.desktop/settings.json` on Windows,
+//! `~/Library/Application Support/space.scync.desktop/` on macOS).
+//! Never store vault secrets, tokens, or the master password here.
+
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
+use tauri::Manager;
+
+pub const DEFAULT_HOTKEY: &str = "CommandOrControl+Shift+Space";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Settings {
+    /// Global quick-search hotkey (accelerator string).
+    pub hotkey: String,
+    /// Auto-lock after idle minutes; None disables.
+    pub idle_lock_minutes: Option<u64>,
+    /// Auto-lock after the window has been hidden for N minutes; None disables.
+    pub hidden_lock_minutes: Option<u64>,
+    /// Clipboard auto-clear seconds for copied secrets.
+    pub clipboard_clear_secs: u64,
+    /// Window content protection (screenshot/recording shield), best-effort.
+    pub content_protection: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            hotkey: DEFAULT_HOTKEY.into(),
+            idle_lock_minutes: Some(5),
+            hidden_lock_minutes: Some(5),
+            clipboard_clear_secs: 20,
+            content_protection: true,
+        }
+    }
+}
+
+fn settings_path(app: &tauri::AppHandle) -> PathBuf {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .unwrap_or_else(|_| PathBuf::from("."));
+    dir.join("settings.json")
+}
+
+pub fn load(app: &tauri::AppHandle) -> Settings {
+    let path = settings_path(app);
+    match fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
+        Err(_) => Settings::default(),
+    }
+}
+
+pub fn save(app: &tauri::AppHandle, settings: &Settings) -> Result<(), String> {
+    let path = settings_path(app);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let text = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+    fs::write(&path, text).map_err(|e| e.to_string())
+}

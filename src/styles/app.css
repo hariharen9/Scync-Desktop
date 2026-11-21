@@ -6,35 +6,35 @@
   font-weight: 600 800;
   font-style: normal;
   font-display: swap;
-  src: url('./fonts/Syne-var.woff2') format('woff2');
+  src: url('../ui/fonts/Syne-var.woff2') format('woff2');
 }
 @font-face {
   font-family: 'Plus Jakarta Sans';
   font-weight: 400;
   font-style: normal;
   font-display: swap;
-  src: url('./fonts/PlusJakartaSans-var.woff2') format('woff2');
+  src: url('../ui/fonts/PlusJakartaSans-var.woff2') format('woff2');
 }
 @font-face {
   font-family: 'DM Mono';
   font-weight: 300;
   font-style: normal;
   font-display: swap;
-  src: url('./fonts/DMMono-300.woff2') format('woff2');
+  src: url('../ui/fonts/DMMono-300.woff2') format('woff2');
 }
 @font-face {
   font-family: 'DM Mono';
   font-weight: 400;
   font-style: normal;
   font-display: swap;
-  src: url('./fonts/DMMono-400.woff2') format('woff2');
+  src: url('../ui/fonts/DMMono-400.woff2') format('woff2');
 }
 @font-face {
   font-family: 'DM Mono';
   font-weight: 500;
   font-style: normal;
   font-display: swap;
-  src: url('./fonts/DMMono-500.woff2') format('woff2');
+  src: url('../ui/fonts/DMMono-500.woff2') format('woff2');
 }
 
 @theme {

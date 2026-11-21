@@ -1,0 +1,66 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: TS typecheck + tests + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      # src/generated/google-client.ts is generated from SCYNC_GOOGLE_* env vars and
+      # git-ignored. Run with no env vars it writes empty strings, which is valid
+      # (Google sign-in disabled with a UI message); the .placeholder is the same shape.
+      - run: |
+          node scripts/generate-google-client.mjs || cp src/generated/google-client.ts.placeholder src/generated/google-client.ts
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: npm audit (report only)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+  rust:
+    name: Rust build + tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: cargo build
+        working-directory: src-tauri
+        run: cargo build --locked
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test --locked
+      - name: cargo clippy (report only)
+        working-directory: src-tauri
+        run: cargo clippy -- -D warnings
+        continue-on-error: true
+      - name: cargo audit (report only)
+        working-directory: src-tauri
+        run: |
+          cargo install cargo-audit --locked || exit 0
+          cargo audit || true
+        continue-on-error: true

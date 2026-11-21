@@ -1,0 +1,118 @@
+# Decision log — Scync Desktop
+
+Short-lived entries that explain **why** the desktop app is shaped the way it
+is. Newest at the bottom. Today's context: desktop MVP targeting Windows,
+reusing the existing web app's vault.
+
+## D1 — Vendor the backend instead of sharing a workspace package
+
+`scync/` (web) and `scync-cli/` are frozen for this build: their code is
+**copied** into `src/backend/` and adapted, never referenced or modified.
+Rationale: the constraint "don't touch web and CLI code" would otherwise
+force a workspace refactor (monorepo packages/core) that changes three apps
+at once. Vendoring trades some duplication for a hard, checkable boundary.
+Every copied file is listed with its origin and deviations in
+`PROVENANCE.md`. The cost is real: some contract changes now need to be
+re-applied here by hand — `docs/INTEROP.md` is the checklist that guards it.
+
+## D2 — Crypto stays byte-identical, not "compatible"
+
+`crypto.ts`, `types.ts`, `constants.ts`, `firestore.ts`, `totp.ts` are
+byte-identical copies from the CLI core (including PBKDF2 310k iterations,
+AES-256-GCM, key = `password + uid`, verifier = `encrypt(key, "Scync_VALID_v1")`).
+Golden tests (`tests/crypto.test.ts`) pin the contract so a careless desktop
+"tweak" cannot silently fork the vault format.
+
+## D3 — Frontend Firebase integration instead of Node CLI core
+
+The CLI's backend runs in Node and its Firebase client works with global
+fetch/`undici`. The desktop UI runs in the webview, so the web app's
+browser-shaped Firebase integration (IndexedDB persistence, browser
+`Auth`Listeners) was vendored and adapted (`src/backend/firebase.ts`) with the
+hosted config hardcoded and `setBaseConfig` kept for self-hosters. Pinned to
+`firebase@10.14.1` — the same major as the CLI — so the wire behavior
+(REST endpoints, field shapes) cannot drift between majors.
+
+## D4 — Google OAuth via Rust loopback (not Firebase popup)
+
+`signInWithPopup` needs a stable HTTPS origin for the OAuth redirect, which
+the desktop webview (`tauri://localhost` on macOS, `http://tauri.localhost`
+on Windows) does not provide. Instead a Rust command runs a loopback
+flow: ephemeral port, PKCE S256, constant-time state check, opens the system
+browser, self-contained success page. Tokens return to JS via
+`signInWithCredential(GoogleAuthProvider.credential(idToken, accessToken))`,
+so after that point everything (uid, token persistence, Firestore rules) is
+exactly the web app's flow. Client id/secret are injected at build time by
+`scripts/generate-google-client.mjs` from env vars and live only in a
+git-ignored generated file. Share links are hardcoded to
+`https://scync.space/share/...` because `window.location.origin` would be the
+webview origin (documented in PROVENANCE as the one place web semantics were
+replaced, not copied).
+
+## D5 — The main window owns everything secret; the popup owns nothing
+
+The quick-search popup (`quick.html`) is a separate, always-on-top,
+frameless window. Its data flow is deliberately one-shaped: it emits
+`quick:query`, receives metadata-only results, and requests `quick:copy`.
+The **main** window resolves the copy — decrypts on demand, calls the Rust
+clipboard command, and reports back a result event. Plaintext never crosses
+the window boundary, so a compromised or injected popup cannot read vault
+values; its capabilities file only allows core window commands and hide.
+
+## D6 — Rust owns no crypto
+
+Rust handles only what a webview can't: tray, hotkeys, menu, loopback OAuth
+server, system clipboard, single-instance, autostart, content protection.
+It never touches the vault key or Firestore. Consequence: the entire
+security review of vault confidentiality is TypeScript + tests, and Rust
+changes stay low-risk.
+
+## D7 — Lock model: key dropped, ciphertext retained
+
+`lockNow` nulls the derived key and (for idle/hidden/tray locks) tears down
+Firestore subscriptions and clears the data store. Metadata survives only
+while signed in; ciphertext arrays are re-fetched on next unlock via
+whole-collection snapshots. Rate limiting (5 attempts, then exponential
+backoff capped at 60 s) is client-side only — the same posture as the web
+app; server-side attempt limits are documented as a gap in SECURITY.md.
+
+## D8 — Settings in Rust-managed JSON, non-secret only
+
+`settings.json` (hotkey, idle/hidden lock minutes, clipboard clear seconds,
+content protection, and nothing else) lives in the OS app-config dir and is
+read/written by Rust commands. Nothing secret is stored there by design;
+Firebase auth tokens are handled by the SDK's own IndexedDB persistence.
+
+## D9 — Main window close hides to tray
+
+The spec's hotkey + tray posture only makes sense if the process survives
+window close. Quit is explicit (tray menu → Quit). The quick popup hides
+itself on blur and on Esc; the global shortcut toggles it, positioned on the
+cursor's monitor.
+
+## D10 — Share keys live in a separate desktop module
+
+`generateShareKey` / `exportShareKey` / `importShareKey` were added to the
+web core's share flow in the web repo; to keep the CLI's `crypto.ts`
+byte-identical, they live in `src/backend/share-keys.ts` here.
+
+## D11 — Updater deferred
+
+The Tauri updater plugin needs a signing key pair and an update feed URL that
+don't exist yet for this project. The bundle target is left out of
+`tauri.conf.json`; wiring the updater is a ROADMAP item, not silent debt.
+
+## D12 — `npm audit` posture
+
+17 vulnerabilities reported at install time, all transitive inside
+`firebase@10` (undici et al.). Same exposure as the frozen web app/CLI pin;
+accepted for this milestone and recorded here rather than silently upgrading
+the shared Firebase major (which would risk contract drift; see D3).
+
+## D13 — TOTP decryption cost: per window, not per second
+
+The TOTP view decrypts each token's secret once per code window (30/60 s) and
+ticks the countdown locally; the quick popup decrypts only on copy. Crude
+alternative (decrypt every second) was measured unnecessary and would burn
+battery; correctness is the same because code derivation is deterministic on
+the decrypted secret.

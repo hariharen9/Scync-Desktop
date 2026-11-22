@@ -58,6 +58,7 @@ fn main() {
             commands::is_autostart_enabled,
             commands::get_hotkey,
             commands::quit_app,
+            commands::open_external,
         ])
         .setup(|app| {
             let settings = settings::load(app.handle());

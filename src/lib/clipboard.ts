@@ -10,14 +10,14 @@ export async function copyToSystemClipboard(text: string, label = 'Copied'): Pro
   const secs = useUiStore.getState().settings.clipboardClearSecs ?? 20;
   try {
     await bridge.copySecret(text, secs);
-    useUiStore.getState().showToast(label, secs > 0 ? `Clipboard clears in ${secs}s` : undefined);
+    useUiStore.getState().showToast(label, secs > 0 ? `Clipboard clears in ${secs}s` : undefined, 'success');
   } catch (e) {
     // Plain browser dev (no Tauri): fall back to the web clipboard w/o auto-clear.
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
       await navigator.clipboard.writeText(text);
-      useUiStore.getState().showToast(label + ' (dev)', 'Dev fallback: no auto-clear');
+      useUiStore.getState().showToast(label + ' (dev)', 'Dev fallback: no auto-clear', 'neutral');
     } else {
-      useUiStore.getState().showToast('Copy failed', e instanceof Error ? e.message : String(e));
+      useUiStore.getState().showToast('Copy failed', e instanceof Error ? e.message : String(e), 'error');
     }
   }
 }

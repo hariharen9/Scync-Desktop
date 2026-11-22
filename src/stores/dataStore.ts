@@ -66,8 +66,21 @@ export interface DomainState {
   shares: ShareDocument[];
 }
 
+/** Domains whose first onSnapshot has arrived (drives skeletons vs empty). */
+export interface LoadedState {
+  secrets: boolean;
+  passwords: boolean;
+  sshKeys: boolean;
+  totpTokens: boolean;
+  certificates: boolean;
+  projects: boolean;
+  services: boolean;
+  shares: boolean;
+}
+
 interface DataState extends DomainState {
   subscriptionsReady: boolean;
+  loaded: LoadedState;
   subscribeAll: (uid: string) => () => void;
   unsubscribeAll: () => void;
   clearAll: () => void;
@@ -132,6 +145,17 @@ const EMPTY: DomainState = {
   shares: [],
 };
 
+const NOT_LOADED: LoadedState = {
+  secrets: false,
+  passwords: false,
+  sshKeys: false,
+  totpTokens: false,
+  certificates: false,
+  projects: false,
+  services: false,
+  shares: false,
+};
+
 let unsubscribers: Array<() => void> = [];
 
 function assertUnlocked(): CryptoKey {
@@ -145,6 +169,7 @@ function assertUnlocked(): CryptoKey {
 export const useDataStore = create<DataState>((set, get) => ({
   ...EMPTY,
   subscriptionsReady: false,
+  loaded: { ...NOT_LOADED },
 
   subscribeAll: (uid) => {
     // Tear down any previous round of subscriptions before re-subscribing.
@@ -153,7 +178,10 @@ export const useDataStore = create<DataState>((set, get) => ({
     void db;
 
     const makeSetter = <K extends keyof DomainState>(key: K) =>
-      (items: DomainState[K]) => set({ [key]: items } as unknown as Partial<DataState>);
+      (items: DomainState[K]) => set({
+        [key]: items,
+        loaded: { ...get().loaded, [key]: true },
+      } as unknown as Partial<DataState>);
 
     unsubscribers = [
       subscribeToSecrets(uid, makeSetter('secrets')),
@@ -180,10 +208,10 @@ export const useDataStore = create<DataState>((set, get) => ({
       }
     }
     unsubscribers = [];
-    set({ subscriptionsReady: false });
+    set({ subscriptionsReady: false, loaded: { ...NOT_LOADED } });
   },
 
-  clearAll: () => set({ ...EMPTY }),
+  clearAll: () => set({ ...EMPTY, loaded: { ...NOT_LOADED } }),
 
   decryptSecretById: async (id) => {
     const stored = get().secrets.find((s) => s.id === id);

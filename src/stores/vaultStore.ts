@@ -31,6 +31,8 @@ interface VaultState {
   derivedKey: CryptoKey | null;
   vaultMeta: VaultMeta | null;
   lockPhase: LockPhase;
+  /** Why the vault last locked, for a gentle explanation on the unlock screen. */
+  lockReason: string | null;
   /** Failed unlock attempts since last success (drives rate limiting). */
   failedAttempts: number;
   /** Wall-clock time when the next attempt is allowed (rate limiting). */
@@ -40,7 +42,7 @@ interface VaultState {
   setUid: (uid: string | null) => void;
   loadVaultMeta: (uid: string) => Promise<boolean>;
   unlock: (password: string) => Promise<boolean>;
-  lock: (opts?: { silent?: boolean }) => void;
+  lock: (opts?: { silent?: boolean; reason?: string }) => void;
   clearSession: () => void;
   isVaultReady: () => boolean;
 }
@@ -50,6 +52,7 @@ export const useVaultStore = create<VaultState>((set, get) => ({
   derivedKey: null,
   vaultMeta: null,
   lockPhase: 'locked',
+  lockReason: null,
   failedAttempts: 0,
   nextAttemptAllowedAt: 0,
   error: null,
@@ -118,6 +121,7 @@ export const useVaultStore = create<VaultState>((set, get) => ({
         failedAttempts: 0,
         nextAttemptAllowedAt: 0,
         error: null,
+        lockReason: null,
       });
       return true;
     } catch (e) {
@@ -135,12 +139,13 @@ export const useVaultStore = create<VaultState>((set, get) => ({
    * The quick-search popup is told via a `vault:locked` event (sent by the
    * caller with the Tauri emitter) to clear its results.
    */
-  lock: (_opts) => {
+  lock: (opts) => {
     set({
       derivedKey: null,
       vaultMeta: get().vaultMeta ?? null,
       lockPhase: 'locked',
       error: null,
+      lockReason: opts?.silent ? null : opts?.reason ?? null,
     });
   },
 
@@ -151,6 +156,7 @@ export const useVaultStore = create<VaultState>((set, get) => ({
       derivedKey: null,
       vaultMeta: null,
       lockPhase: 'locked',
+      lockReason: null,
       failedAttempts: 0,
       nextAttemptAllowedAt: 0,
       error: null,

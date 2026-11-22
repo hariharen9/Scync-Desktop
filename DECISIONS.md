@@ -116,3 +116,41 @@ ticks the countdown locally; the quick popup decrypts only on copy. Crude
 alternative (decrypt every second) was measured unnecessary and would burn
 battery; correctness is the same because code derivation is deterministic on
 the decrypted secret.
+
+## D14 — UX polish pass: shared primitives, command palette, motion
+
+Elevated the MVP into a cohesive product without touching the backend
+contract (`src/backend/` is unchanged; PROVENANCE stands):
+
+- **Design tokens live in `src/styles/app.css`.** One motion vocabulary
+  (`fade-up`/`scale-in`/`pop-in` plus staggered entrances), one control set
+  (`.field`, `.btn-primary`, `.btn-ghost`, `.btn-danger`, `.icon-btn`,
+  `.chip`, `.kbd`, `.skeleton`), and a slightly lifted `--color-subtle` for
+  legible metadata. The look still matches the web app's dark emerald
+  language; density is tuned for a desktop window.
+- **`src/ui/components/primitives.tsx`** is the shared kit (BrandMark, Avatar,
+  Kbd/ModKbd, Chip, Skeleton, useCopyFeedback, useEscape). `ModKbd` renders
+  ⌘ on macOS and Ctrl elsewhere so keyboard hints are never wrong.
+- **Command palette (`⌘K`/`Ctrl+K`)** searches the metadata-only index and
+  copies without painting plaintext, exactly like the quick popup — same
+  `bridge.copySecret` boundary. Enter copies, Tab jumps to the item's view.
+- **Quick popup** gained group labels, a platform-correct secondary-field
+  hint, a proper locked state with "Open Scync to unlock", and inline copy
+  errors. Still metadata-only; the split-window key boundary is unchanged.
+- **Affordance edits are UI-only.** Reveal now offers decrypt-and-copy without
+  revealing; lists show skeletons until their first snapshot (`dataStore.loaded`);
+  every list is arrow-key navigable with `/` to focus search; write failures
+  are translated by `src/lib/errors.ts` into actionable copy.
+- **New Rust command `open_external`** opens http(s) links in the system
+  browser (the spec's external-link rule had no implementation). It rejects
+  any non-http(s) scheme. Registered in `main.rs` and wrapped by
+  `openExternal()` in `auth/bridge.ts`, which falls back to `window.open` in
+  browser dev.
+- **Lock reasons are surfaced.** `lockNow(reason)` records idle/timeout/
+  suspend causes and the unlock screen explains "Locked automatically · idle
+  timeout"; manual/tray locks stay silent.
+
+None of this changes a single Firestore write shape, crypto parameter, or
+`meta/vault` behaviour. The full suite (tsc, 49 vitest, vite build, cargo
+build/test) is green, and every screen was inspected in a browser against
+seeded metadata.

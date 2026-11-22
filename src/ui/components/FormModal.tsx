@@ -3,13 +3,15 @@
  * certificate, project, service). All encrypted writes funnel through
  * dataStore write helpers; plaintext only lives in local form state.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import forge from 'node-forge';
+import { FiX } from 'react-icons/fi';
 import { useUiStore, type Environment, type SecretStatus, type SecretType, type ProjectColor } from '@/stores/uiStore.js';
 import { useDataStore } from '@/stores/dataStore.js';
 import { generateSSHKeyPair } from '@/backend/index.js';
 import { parseCertificatePem, validateCertKeyPair } from '@/backend/index.js';
 import { pushToast } from './Toast.js';
+import { useEscape } from './primitives.js';
 
 const ENVIRONMENTS: Environment[] = ['Personal', 'Work', 'Development', 'Staging', 'Production', 'Local', 'Testing', 'CI/CD'];
 const STATUSES: SecretStatus[] = ['Active', 'Rotated', 'Expired', 'Revoked'];
@@ -55,18 +57,41 @@ export default function FormModal() {
   const { kind, id } = formModal;
   const open = kind !== null;
   const editing = id !== null && id !== '';
+  const panelRef = useRef<HTMLDivElement>(null);
+  const confirmOpen = useUiStore((s) => s.confirm !== null);
+
+  // Esc closes the form, but not while a confirm sits above it.
+  useEscape(open && !confirmOpen, closeForm);
+
+  useEffect(() => {
+    if (!open) return;
+    const t = setTimeout(() => {
+      const el = panelRef.current?.querySelector<HTMLElement>('input, textarea, select');
+      el?.focus();
+    }, 40);
+    return () => clearTimeout(t);
+  }, [open, kind]);
 
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-30 bg-black/50 flex items-center justify-center overflow-y-auto py-8" onClick={() => closeForm()}>
-      <div className="card w-full max-w-lg p-5 my-auto" onClick={(e) => e.stopPropagation()}>
-        {kind === 'secret' && <SecretForm id={editing ? id : null} onDone={closeForm} />}
-        {kind === 'password' && <PasswordForm id={editing ? id : null} onDone={closeForm} />}
-        {kind === 'ssh' && <SshForm id={editing ? id : null} onDone={closeForm} />}
-        {kind === 'totp' && <TotpForm id={editing ? id : null} onDone={closeForm} />}
-        {kind === 'cert' && <CertForm id={editing ? id : null} onDone={closeForm} />}
-        {kind === 'project' && <ProjectForm id={editing ? id : null} onDone={closeForm} />}
-        {kind === 'service' && <ServiceForm id={editing ? id : null} onDone={closeForm} />}
+    <div className="modal-overlay !items-start !pt-[8vh] overflow-y-auto" onClick={() => closeForm()}>
+      <div ref={panelRef} className="modal-panel card w-full max-w-lg p-5 anim-scale-in" onClick={(e) => e.stopPropagation()}>
+        <div className="relative">
+          <button
+            className="icon-btn absolute -right-1 -top-1 !w-7 !h-7"
+            onClick={closeForm}
+            aria-label="Close"
+          >
+            <FiX size={14} />
+          </button>
+          {kind === 'secret' && <SecretForm id={editing ? id : null} onDone={closeForm} />}
+          {kind === 'password' && <PasswordForm id={editing ? id : null} onDone={closeForm} />}
+          {kind === 'ssh' && <SshForm id={editing ? id : null} onDone={closeForm} />}
+          {kind === 'totp' && <TotpForm id={editing ? id : null} onDone={closeForm} />}
+          {kind === 'cert' && <CertForm id={editing ? id : null} onDone={closeForm} />}
+          {kind === 'project' && <ProjectForm id={editing ? id : null} onDone={closeForm} />}
+          {kind === 'service' && <ServiceForm id={editing ? id : null} onDone={closeForm} />}
+        </div>
       </div>
     </div>
   );
@@ -75,21 +100,21 @@ export default function FormModal() {
 interface FormProps { id: string | null; onDone: () => void }
 
 function ModalHeader({ title }: { title: string }) {
-  return <h2 className="font-semibold text-sm mb-4">{title}</h2>;
+  return <h2 className="font-display font-bold text-[15px] tracking-tight mb-4 pr-6">{title}</h2>;
 }
 
 function ErrorLine({ error }: { error: string | null }) {
   if (!error) return null;
-  return <div className="text-[12px] text-red-400 mt-2">{error}</div>;
+  return <div className="text-[12px] text-rose-400 mt-2 anim-fade-in" role="alert">{error}</div>;
 }
 
 function Actions({ busy, canSubmit, label }: { busy: boolean; canSubmit: boolean; label: string }) {
   const closeForm = useUiStore((s) => s.closeForm);
   return (
-    <div className="flex gap-2 justify-end mt-5">
+    <div className="flex gap-2 justify-end mt-5 pt-4 border-t border-border">
       <button type="button" className="btn-ghost" onClick={closeForm} disabled={busy}>Cancel</button>
       <button type="submit" className="btn-primary" disabled={busy || !canSubmit}>
-        {busy ? 'Saving…' : label}
+        {busy ? <><span className="spinner" /> Saving…</> : label}
       </button>
     </div>
   );
@@ -147,6 +172,7 @@ function SecretForm({ id, onDone }: FormProps) {
         editing && stored ? stored.id : undefined,
         editing && stored ? stored : undefined,
       );
+      pushToast.success(editing ? 'Secret updated' : 'Secret created', name.trim());
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -237,6 +263,7 @@ function PasswordForm({ id, onDone }: FormProps) {
         { name: name.trim(), username: username.trim(), password: currentPassword, url: url.trim(), notes: currentNotes, category: category.trim() },
         editing && stored ? stored.id : undefined,
       );
+      pushToast.success(editing ? 'Password updated' : 'Password created', name.trim());
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -349,6 +376,7 @@ function SshForm({ id, onDone }: FormProps) {
           hosts: hostList,
         });
       }
+      pushToast.success(editing ? 'Key updated' : 'SSH key added', name.trim());
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -453,6 +481,7 @@ function TotpForm({ id, onDone }: FormProps) {
           editing && stored ? stored.id : undefined,
         );
       }
+      pushToast.success(editing ? 'Token updated' : 'Token added', issuer.trim() || label.trim());
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -552,6 +581,7 @@ function CertForm({ onDone }: FormProps) {
         certPem: certPem.trim(),
         keyPem: keyPem.trim() || null,
       });
+      pushToast.success('Certificate added', name.trim());
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -602,6 +632,7 @@ function ProjectForm({ id, onDone }: FormProps) {
     setBusy(true);
     try {
       await writeProject({ name: name.trim(), color, icon: icon.trim(), description: description.trim() }, editing && stored ? stored.id : undefined);
+      pushToast.success(editing ? 'Project updated' : 'Project created', name.trim());
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -658,6 +689,7 @@ function ServiceForm({ id, onDone }: FormProps) {
     setBusy(true);
     try {
       await writeService({ name: name.trim(), color, icon: icon.trim() }, editing && stored ? stored.id : undefined);
+      pushToast.success(editing ? 'Service updated' : 'Service created', name.trim());
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

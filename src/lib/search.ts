@@ -89,3 +89,9 @@ export function fieldsFor(kind: QuickSearchItem['kind']): Array<{ field: string;
       ];
   }
 }
+
+/** Label for the secondary (Ctrl/Cmd+↵) copy action, or null when none. */
+export function secondaryLabel(kind: QuickSearchItem['kind']): string | null {
+  const fields = fieldsFor(kind);
+  return fields.length > 1 ? fields[1].label : null;
+}

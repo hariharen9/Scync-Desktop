@@ -29,18 +29,19 @@ item moves; delete items here when completed (the git log remembers).
 
 - [ ] Code-split the 875 kB main chunk (firebase is most of it): dynamic-import
       firebase behind a lazy init so first paint of the sign-in screen is fast.
-- [ ] Loading skeletons for Secrets view first onSnapshot (spinner exists;
-      skeletons match the spec's polish bar).
+- [x] Loading skeletons for the list views' first `onSnapshot`
+      (`dataStore.loaded` gates each domain).
 - [ ] Window state persistence: restore size/position between launches
       (`window-state` plugin) — spec lists remembered windows.
 - [ ] Tray icon + menu extras: double-click-to-restore, tooltip shows lock state.
-- [ ] Error toasts for Firestore write failures are generic — surface the
-      specific offline/permission copy from `errors.ts` (verify all paths).
-- [ ] Keyboard pass: tab order in modals, Enter submits, Esc cancels uniformly;
-      focus trap in FormModal/ConfirmModal.
+- [x] Error toasts for Firestore write failures surface specific copy
+      (`src/lib/errors.ts` → `pushToast.fromError`).
+- [x] Keyboard pass: Esc closes modals/clears fields, Enter submits, forms
+      auto-focus, `/` focuses list search, arrow keys move list selection.
 - [ ] Empty-state illustrations on first open (currently text-only EmptyState).
-- [ ] Version display: show app version in Settings + About (about modal has it;
-      add to Settings footer) — `__APP_VERSION__` already wired.
+- [x] Version display: shown in Settings footer and About modal.
+- [x] Command palette (`⌘K`/`Ctrl+K`) over the metadata index + quick actions.
+- [x] External links open in the system browser (`open_external` Rust command).
 
 ## 3. From ROADMAP that should be pulled forward
 

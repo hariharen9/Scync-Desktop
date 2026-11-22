@@ -110,7 +110,10 @@ function tick(): void {
 
 /** Lock everything, inform the popup, and reset activity. */
 export function lockNow(reason: string): void {
-  useVaultStore.getState().lock();
+  // Keep the human-readable reason for the unlock screen (manual/tray locks
+  // are intentional, so they carry no "why did it lock" explanation).
+  const explain = reason === 'idle timeout' || reason === 'system sleep' || reason === 'window hidden';
+  useVaultStore.getState().lock({ reason: explain ? reason : undefined, silent: !explain });
   lastActivity = Date.now();
   // Tell the quick-search window to clear results and show its locked state.
   void emit('vault:locked', { reason });

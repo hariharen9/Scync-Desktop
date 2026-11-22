@@ -224,6 +224,17 @@ pub fn quit_app(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Open a URL in the system browser. Only http(s) is accepted so a stray
+/// link can never hand the OS a local-file or custom-scheme target.
+#[tauri::command]
+pub fn open_external(url: String) -> Result<(), String> {
+    let trimmed = url.trim();
+    if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
+        return Err("only http(s) links can be opened externally".into());
+    }
+    open::that(trimmed).map_err(|e| e.to_string())
+}
+
 /// Recreate a webview window (used to reopen the main window if destroyed).
 pub fn ensure_main_window(app: &AppHandle) {
     if app.get_webview_window(MAIN_WINDOW).is_none() {

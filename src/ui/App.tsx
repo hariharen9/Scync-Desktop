@@ -13,6 +13,7 @@ import { listen, emit } from '@/auth/bridge.js';
 import { bridge } from '@/auth/bridge.js';
 import { ensureAuthReady } from '@/backend/firebase.js';
 import { searchItems } from '@/lib/search.js';
+import { BrandMark, Spinner } from './components/primitives.js';
 
 import SignInScreen from './screens/SignInScreen.js';
 import UnlockScreen from './screens/UnlockScreen.js';
@@ -46,6 +47,22 @@ async function resolveQuickCopyValue(id: string, kind: string, field: string): P
     default:
       throw new Error('Unknown item type');
   }
+}
+
+function BootScreen({ label }: { label: string }) {
+  return (
+    <div className="h-full grid place-items-center">
+      <div className="text-center anim-fade-in">
+        <div className="inline-grid place-items-center mb-4">
+          <BrandMark size={44} glow />
+        </div>
+        <div className="font-display text-[15px] font-extrabold tracking-[-0.03em] mb-2">SCYNC</div>
+        <div className="flex items-center justify-center gap-2 mono-label">
+          <Spinner /> {label}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -99,6 +116,7 @@ export default function App() {
   // Vault-meta gate: decide unlock vs no-vault message.
   useEffect(() => {
     if (!user) return;
+    setHasMeta(null);
     useVaultStore.getState().setUid(user.uid);
     useVaultStore
       .getState()
@@ -117,7 +135,7 @@ export default function App() {
     }
   }, [lockPhase, user]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Tray "Lock now" hotkey event.
+  // Tray "Lock now" menu item.
   useEffect(() => {
     const stop = listen<{ reason: string }>('tray:lock', () => lockNow('tray'));
     return () => void stop.then((f) => f());
@@ -158,7 +176,7 @@ export default function App() {
     };
   }, []);
 
-  // Manual lock via Cmd/Ctrl+L; Sign-out hotkey none (UI only).
+  // Manual lock via Cmd/Ctrl+L.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'l') {
@@ -193,8 +211,9 @@ export default function App() {
     return (
       <div className="h-full grid place-items-center">
         <div className="text-center">
-          <div className="font-display text-lg font-bold tracking-tight">SCYNC</div>
-          <div className="mono-label mt-2">starting…</div>
+          <div className="inline-grid place-items-center mb-4"><BrandMark size={44} glow /></div>
+          <div className="font-display text-[15px] font-extrabold tracking-[-0.03em] mb-2">SCYNC</div>
+          <div className="flex items-center justify-center gap-2 mono-label"><Spinner /> starting…</div>
           {userError && <div className="text-xs text-rose-400 mt-3 max-w-sm">{userError}</div>}
         </div>
       </div>
@@ -205,6 +224,11 @@ export default function App() {
     return <SignInScreen />;
   }
 
+  // Signed in, still resolving whether a vault exists.
+  if (hasMeta === null) {
+    return <BootScreen label="checking your vault…" />;
+  }
+
   if (hasMeta === false) {
     return <NoVaultScreen email={user.email ?? ''} onSignOut={() => signOut()} />;
   }
@@ -213,6 +237,8 @@ export default function App() {
     return (
       <UnlockScreen
         email={user.email ?? ''}
+        displayName={user.displayName}
+        photoURL={user.photoURL}
         onSignOut={() => signOut()}
         unlocking={lockPhase === 'unlocking'}
       />

@@ -65,7 +65,24 @@ export const bridge = {
   quitApp(): Promise<void> {
     return invoke('quit_app');
   },
+  openExternal(url: string): Promise<void> {
+    return invoke('open_external', { url });
+  },
 };
+
+/**
+ * Open a link in the system browser. Uses the Rust command inside Tauri and
+ * falls back to a normal navigation in browser dev mode.
+ */
+export function openExternal(url: string): void {
+  if (isTauri) {
+    void invoke('open_external', { url }).catch(() => {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    });
+  } else {
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+}
 
 export interface SettingsFile {
   hotkey: string;

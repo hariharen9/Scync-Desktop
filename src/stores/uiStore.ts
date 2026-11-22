@@ -1,7 +1,7 @@
 /**
- * uiStore — active view, filters, modals, selected item, and non-secret
- * settings. Settings persist to the Tauri app-config dir via Rust
- * (`load_settings` / `save_settings`); localStorage is a dev-only fallback.
+ * uiStore — active view, filters, modals, selection, command palette, and
+ * non-secret settings. Settings persist to the Tauri app-config dir via Rust
+ * (`load_settings` / `save_settings`); the fallback keeps browser dev usable.
  */
 import { create } from 'zustand';
 import type { VaultFilter, Environment, SecretStatus, SecretType, ProjectColor } from '@/backend/index.js';
@@ -10,6 +10,8 @@ import { bridge, type SettingsFile, DEFAULT_SETTINGS_FALLBACK } from '@/lib/sett
 export type ActiveView = 'dashboard' | 'secrets' | 'passwords' | 'totp' | 'ssh' | 'certs' | 'projects' | 'settings';
 
 export interface AppSettings extends SettingsFile {}
+
+export type ToastTone = 'neutral' | 'success' | 'error';
 
 interface UiState {
   activeView: ActiveView;
@@ -20,10 +22,12 @@ interface UiState {
   /** id of the item whose form modal is open ('' = none) + the modal kind. */
   formModal: { kind: string | null; id: string | null };
   aboutOpen: boolean;
+  commandPaletteOpen: boolean;
   confirm: { title: string; message: string; confirmText?: string; danger?: boolean; onConfirm: (() => void) | null } | null;
-  toast: { text: string; detail?: string } | null;
+  toast: { text: string; detail?: string; tone: ToastTone } | null;
 
   setView: (v: ActiveView) => void;
+  setViewWithSelection: (v: ActiveView, id: string) => void;
   patchSettings: (patch: Partial<AppSettings>) => void;
   reloadSettings: () => Promise<void>;
   setFilter: (patch: Partial<VaultFilter>) => void;
@@ -32,10 +36,11 @@ interface UiState {
   openForm: (kind: string, id?: string | null) => void;
   closeForm: () => void;
   setAboutOpen: (open: boolean) => void;
+  setCommandPaletteOpen: (open: boolean) => void;
   askConfirm: (config: NonNullable<UiState['confirm']>) => void;
   resolveConfirm: () => void;
   dismissConfirm: () => void;
-  showToast: (text: string, detail?: string) => void;
+  showToast: (text: string, detail?: string, tone?: ToastTone) => void;
   clearToast: () => void;
 }
 
@@ -56,10 +61,14 @@ export const useUiStore = create<UiState>((set, get) => ({
   selectedSecretId: null,
   formModal: { kind: null, id: null },
   aboutOpen: false,
+  commandPaletteOpen: false,
   confirm: null,
   toast: null,
 
   setView: (view) => set({ activeView: view, selectedSecretId: null }),
+
+  // Jump to a view with a specific item selected (dashboard → detail links).
+  setViewWithSelection: (view, id) => set({ activeView: view, selectedSecretId: id }),
 
   patchSettings: (patch) => {
     const merged = { ...get().settings, ...patch };
@@ -88,6 +97,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   closeForm: () => set({ formModal: { kind: null, id: null } }),
 
   setAboutOpen: (open) => set({ aboutOpen: open }),
+  setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
 
   askConfirm: (config) => set({ confirm: config }),
   resolveConfirm: () => {
@@ -98,7 +108,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 
   dismissConfirm: () => set({ confirm: null }),
 
-  showToast: (text, detail) => set({ toast: { text, detail } }),
+  showToast: (text, detail, tone = 'neutral') => set({ toast: { text, detail, tone } }),
   clearToast: () => set({ toast: null }),
 }));
 

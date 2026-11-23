@@ -40,6 +40,36 @@ SCYNC_GOOGLE_CLIENT_ID=... SCYNC_GOOGLE_CLIENT_SECRET=... npm run generate-googl
 Without it the Google button shows a disabled-state message and email/password
 sign-in still works. Never commit `src/generated/google-client.ts` (git-ignored).
 
+## Releasing
+
+Pushing a version tag builds every platform and publishes a GitHub Release:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+`.github/workflows/release.yml` runs these matrices in parallel:
+
+| Platform | Runners | Architectures | Artifacts |
+|---|---|---|---|
+| Windows | `windows-latest` | x64, ARM64 | `.exe` (NSIS), `.msi` |
+| macOS | `macos-latest` | Intel, Apple Silicon | `.dmg` (`.app` inside) |
+| Linux | `ubuntu-22.04` | x64, ARM64 | `.deb`, `.rpm`, `.AppImage` |
+
+Notes:
+
+- The tag version is written into `package.json` and `tauri.conf.json` at build
+  time (`scripts/sync-version.mjs`), so artifacts carry the tag's version.
+  `Cargo.toml` is left alone deliberately: bumping it would dirty `Cargo.lock`
+  and break `cargo --locked`.
+- Tags containing a suffix (`v0.2.0-beta.1`) publish as pre-releases.
+- Requires repo secrets `SCYNC_GOOGLE_CLIENT_ID` / `SCYNC_GOOGLE_CLIENT_SECRET`;
+  absent, the build still succeeds with Google sign-in disabled.
+- **Nothing is code-signed.** macOS builds are unsigned, so users must
+  right-click → Open, and Windows shows a SmartScreen warning until signing
+  credentials exist (ROADMAP Phase 5).
+
 ## Architecture in one screen
 
 ```

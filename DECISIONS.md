@@ -154,3 +154,30 @@ None of this changes a single Firestore write shape, crypto parameter, or
 `meta/vault` behaviour. The full suite (tsc, 49 vitest, vite build, cargo
 build/test) is green, and every screen was inspected in a browser against
 seeded metadata.
+
+## D15 — Tag-triggered release matrix across three platforms
+
+Pushing a `v*.*.*` tag runs `.github/workflows/release.yml`, which builds
+Windows (x64, ARM64), macOS (Intel, Apple Silicon) and Linux (x64, ARM64) in
+parallel and publishes one GitHub Release with every artifact attached.
+
+- **Native builds per OS, no cross-compiling between operating systems.**
+  Tauri links against the platform webview (WebView2, WKWebView,
+  WebKitGTK), so a Windows host cannot produce a macOS bundle. Only the
+  Linux ARM64 leg is a true cross-build (GCC aarch64 toolchain plus
+  `PKG_CONFIG_ALLOW_CROSS`).
+- **macOS ships per-architecture `.dmg`s rather than one universal binary.**
+  Universal builds require a `lipo` merge step of the two `.app` trees; two
+  DMGs are simpler, smaller, and let users pick their architecture. Revisit
+  if a single download matters more than size.
+- **Linux targets added to `tauri.conf.json`** (`deb`, `rpm`, `appimage`).
+  They were absent, so a Linux job would have built nothing.
+- **Version is taken from the tag** by `scripts/sync-version.mjs`, which
+  writes `package.json` and `tauri.conf.json`. `Cargo.toml` is not bumped:
+  that dirties `Cargo.lock` and would break `cargo --locked` in the same run.
+- **Artifacts are unsigned.** The workflow does not pretend otherwise; the
+  README states the macOS Gatekeeper and Windows SmartScreen consequences.
+  Signing and notarization slot into the same jobs once credentials exist.
+
+`ci.yml` stays as-is for fast feedback on branches; the release matrix is
+deliberately separate so ordinary pushes never burn macOS/Linux runner time.

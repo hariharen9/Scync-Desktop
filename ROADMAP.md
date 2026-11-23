@@ -17,12 +17,18 @@ enough to ship alone. Unchecked = not started; checkbox order is priority.
 
 ## Phase 5 — platform and distribution
 
+- [x] Tag-triggered release matrix: Windows (x64/ARM64), macOS (Intel/ARM),
+      Linux (x64/ARM64) → one GitHub Release (`.github/workflows/release.yml`,
+      `DECISIONS.md` D15)
 - [ ] Updater plugin: signing key ceremony + update feed URL; re-add
       `updater` bundle target (`DECISIONS.md` D11)
 - [ ] Code signing on Windows (certificateThumbprint is null today)
+- [ ] macOS signing + notarization (Apple Developer ID); builds are unsigned
+      today and require right-click → Open
 - [ ] macOS verification pass: `contentProtected`, system-browser OAuth,
       tray icon sizing, global-shortcut modifiers, `.icns` rendering
-- [ ] Linux build (AppImage/deb) + tray parity checks
+- [ ] Linux verification pass: tray parity, global shortcut under Wayland,
+      AppImage sandbox behaviour
 - [ ] Auto-update UX: in-app release notes dialog, staged rollout alerting
 
 ## Phase 6 — hardening

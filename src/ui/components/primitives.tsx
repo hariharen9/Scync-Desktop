@@ -8,6 +8,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { FiCheck, FiCopy } from 'react-icons/fi';
 
+// The animated "neon lattice orb" brand logo, imported as a bundled asset URL
+// so it is fetched once and cached, then rendered via <img> (SMIL animations
+// run inside <img>-embedded SVGs). Kept out of the JS bundle.
+import scyncLogoUrl from '../../../assets/scync-logo.svg?url';
+
 // ─── Keyboard chip ──────────────────────────────────────────────────────────
 
 /** True on macOS, where the primary modifier is ⌘ rather than Ctrl. */
@@ -72,10 +77,16 @@ export function ListSkeleton({ rows = 6 }: { rows?: number }) {
 }
 
 // ─── Brand mark ─────────────────────────────────────────────────────────────
-// A vector "orb" mark so the UI never depends on a raster asset that may not
-// ship in the webview bundle. Monochrome-ish emerald, works at 16px.
+// The real animated "neon lattice orb" logo (scync-logo.svg), shared by every
+// screen. Rendered as an <img> so the SMIL animation plays and the 500 KB of
+// path data stays out of the JS bundle.
 
 export function BrandMark({ size = 28, glow = false }: { size?: number; glow?: boolean }) {
+  // The artwork's orb occupies roughly the central 72% of its square canvas.
+  // Scale the image with a transform (which does NOT affect layout) so the
+  // visible orb fills the box exactly while the element's layout box is
+  // precisely `size` — keeping it aligned with adjacent text.
+  const scale = 1.36;
   return (
     <span
       className="relative inline-grid place-items-center shrink-0"
@@ -86,29 +97,25 @@ export function BrandMark({ size = 28, glow = false }: { size?: number; glow?: b
         <span
           className="absolute inset-0 rounded-full"
           style={{
-            background: 'radial-gradient(circle, rgba(16,185,129,0.55), transparent 68%)',
-            filter: 'blur(6px)',
-            animation: 'glow-breathe 3.6s ease-in-out infinite',
+            background: 'radial-gradient(circle, rgba(140,60,255,0.42), transparent 70%)',
+            filter: 'blur(8px)',
+            animation: 'glow-breathe 4.2s ease-in-out infinite',
           }}
         />
       )}
-      <svg viewBox="0 0 32 32" width={size} height={size} className="relative">
-        <defs>
-          <linearGradient id="bm-stroke" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#6ee7b7" />
-            <stop offset="60%" stopColor="#10b981" />
-            <stop offset="100%" stopColor="#059669" />
-          </linearGradient>
-        </defs>
-        <circle cx="16" cy="16" r="13.5" fill="none" stroke="url(#bm-stroke)" strokeOpacity="0.55" strokeWidth="1.1" />
-        <circle cx="16" cy="16" r="9.2" fill="none" stroke="url(#bm-stroke)" strokeOpacity="0.32" strokeWidth="0.9" strokeDasharray="1.6 2.6" />
-        <g stroke="url(#bm-stroke)" strokeWidth="0.9" strokeOpacity="0.7">
-          <path d="M16 3.2 L16 9.4 M16 22.6 L16 28.8 M3.2 16 L9.4 16 M22.6 16 L28.8 16" />
-          <path d="M7.6 7.6 L11.6 11.6 M20.4 20.4 L24.4 24.4 M24.4 7.6 L20.4 11.6 M11.6 20.4 L7.6 24.4" strokeOpacity="0.4" />
-        </g>
-        <circle cx="16" cy="16" r="3.1" fill="url(#bm-stroke)" />
-        <circle cx="16" cy="16" r="3.1" fill="#6ee7b7" opacity="0.35" />
-      </svg>
+      <img
+        src={scyncLogoUrl}
+        alt=""
+        draggable={false}
+        className="relative block select-none"
+        style={{
+          width: size,
+          height: size,
+          objectFit: 'contain',
+          transform: `scale(${scale})`,
+          transformOrigin: 'center',
+        }}
+      />
     </span>
   );
 }

@@ -1,30 +1,39 @@
 /**
- * SettingsView — non-secret settings persisted to settings.json via Rust.
- * Hotkey capture, auto-lock timers, clipboard behaviour, launch at login,
- * content protection. Grouped so the screen reads like a control panel.
+ * SettingsView — non-secret preferences persisted to settings.json via Rust.
+ *
+ * Desktop-class layout: a sticky category rail on the left with scroll-spy,
+ * and a wide content column on the right. Controls are purpose-built rather
+ * than generic form rows — the hotkey renders as keycaps, timers use a
+ * segmented preset control plus a stepper for fine tuning.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { FiAlertTriangle, FiCheck, FiExternalLink, FiLogOut, FiPower } from 'react-icons/fi';
+import {
+  FiAlertTriangle, FiCheck, FiChevronRight, FiClipboard, FiCommand, FiExternalLink,
+  FiGithub, FiGlobe, FiInfo, FiLock, FiLogOut, FiMinus, FiPlus, FiPower, FiRotateCcw, FiShield,
+} from 'react-icons/fi';
 import { useUiStore } from '@/stores/uiStore.js';
 import { bridge, isTauri, openExternal } from '@/auth/bridge.js';
-import { PageHeader } from '@/ui/components/common.js';
-import { SectionLabel } from '@/ui/components/primitives.js';
+import { BrandMark, Kbd, MOD_KEY } from '@/ui/components/primitives.js';
 import { pushToast } from '@/ui/components/Toast.js';
 import { lockNow } from '@/lib/autoLock.js';
+import { DEFAULT_SETTINGS_FALLBACK } from '@/lib/settings.js';
 import { APP_VERSION } from '@/lib/version.js';
 
-function Row({ title, hint, children }: { title: string; hint: string; children: ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-6 py-3.5 border-b border-border last:border-0">
-      <div className="min-w-0">
-        <div className="text-[13px] font-medium">{title}</div>
-        <div className="text-[11px] text-muted mt-0.5 leading-snug max-w-md">{hint}</div>
-      </div>
-      <div className="shrink-0">{children}</div>
-    </div>
-  );
-}
+type SectionId = 'search' | 'locking' | 'clipboard' | 'privacy' | 'session' | 'about';
+
+const CREATOR_URL = 'https://hariharen.space';
+
+const SECTIONS: Array<{ id: SectionId; label: string; icon: ReactNode }> = [
+  { id: 'search', label: 'Quick search', icon: <FiCommand size={14} /> },
+  { id: 'locking', label: 'Locking', icon: <FiLock size={14} /> },
+  { id: 'clipboard', label: 'Clipboard', icon: <FiClipboard size={14} /> },
+  { id: 'privacy', label: 'Privacy', icon: <FiShield size={14} /> },
+  { id: 'session', label: 'Session', icon: <FiLogOut size={14} /> },
+  { id: 'about', label: 'About', icon: <FiInfo size={14} /> },
+];
+
+// ─── Controls ───────────────────────────────────────────────────────────────
 
 function Toggle({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
@@ -33,21 +42,174 @@ function Toggle({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean
       aria-checked={on}
       disabled={disabled}
       onClick={() => onChange(!on)}
-      className={'w-10 h-[22px] rounded-full border transition-colors relative disabled:opacity-50 ' + (on ? 'bg-accent-dim border-accent-border' : 'bg-white/[0.05] border-border')}
+      className={
+        'relative w-[42px] h-[24px] rounded-full border transition-colors disabled:opacity-40 ' +
+        (on ? 'bg-accent/25 border-accent-border' : 'bg-white/[0.05] border-border hover:border-border-strong')
+      }
     >
-      <span className={'absolute top-[2px] w-[16px] h-[16px] rounded-full transition-all ' + (on ? 'left-[21px] bg-accent' : 'left-[2px] bg-white/35')} />
+      <span
+        className={
+          'absolute top-[3px] w-[16px] h-[16px] rounded-full transition-all ' +
+          (on ? 'left-[22px] bg-accent shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'left-[3px] bg-white/35')
+        }
+      />
     </button>
   );
 }
 
-function Card({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
+function Segmented<T extends number>({ value, options, onChange }: {
+  value: T;
+  options: Array<{ label: string; value: T }>;
+  onChange: (v: T) => void;
+}) {
   return (
-    <div className="mb-5">
-      <SectionLabel trailing={action}>{title}</SectionLabel>
-      <div className="card px-4">{children}</div>
+    <div className="inline-flex items-center rounded-lg border border-border bg-black/30 p-0.5">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          onClick={() => onChange(o.value)}
+          className={
+            'px-2.5 py-1 rounded-md text-[11.5px] font-medium transition-colors ' +
+            (value === o.value ? 'bg-accent-dim text-accent-light shadow-sm' : 'text-muted hover:text-text')
+          }
+        >
+          {o.label}
+        </button>
+      ))}
     </div>
   );
 }
+
+function Stepper({ value, min, max, step = 1, suffix, onChange }: {
+  value: number; min: number; max: number; step?: number; suffix: string; onChange: (v: number) => void;
+}) {
+  const clamp = (v: number) => Math.max(min, Math.min(max, v));
+  return (
+    <div className="inline-flex items-center rounded-lg border border-border bg-black/30 overflow-hidden">
+      <button
+        className="grid place-items-center w-7 h-7 text-muted hover:text-text hover:bg-white/[0.05] transition-colors disabled:opacity-30"
+        onClick={() => onChange(clamp(value - step))}
+        disabled={value <= min}
+        aria-label="Decrease"
+      >
+        <FiMinus size={12} />
+      </button>
+      <input
+        className="w-11 bg-transparent text-center font-mono text-[12px] outline-none tabular-nums"
+        type="number"
+        min={min}
+        max={max}
+        value={value}
+        onChange={(e) => onChange(clamp(Number(e.target.value) || 0))}
+        aria-label={suffix}
+      />
+      <span className="mono-label pr-1 text-subtle">{suffix}</span>
+      <button
+        className="grid place-items-center w-7 h-7 text-muted hover:text-text hover:bg-white/[0.05] transition-colors disabled:opacity-30"
+        onClick={() => onChange(clamp(value + step))}
+        disabled={value >= max}
+        aria-label="Increase"
+      >
+        <FiPlus size={12} />
+      </button>
+    </div>
+  );
+}
+
+const TIME_PRESETS = [
+  { label: 'Off', value: 0 },
+  { label: '1m', value: 1 },
+  { label: '5m', value: 5 },
+  { label: '15m', value: 15 },
+  { label: '30m', value: 30 },
+  { label: '1h', value: 60 },
+];
+const CLIP_PRESETS = [
+  { label: 'Off', value: 0 },
+  { label: '10s', value: 10 },
+  { label: '20s', value: 20 },
+  { label: '30s', value: 30 },
+  { label: '60s', value: 60 },
+];
+
+// ─── Layout bits ────────────────────────────────────────────────────────────
+
+function Section({ id, title, description, icon, children, danger }: {
+  id: SectionId;
+  title: string;
+  description: string;
+  icon: ReactNode;
+  children: ReactNode;
+  danger?: boolean;
+}) {
+  return (
+    <section id={`settings-${id}`} className="scroll-mt-6 mb-6">
+      <div className="flex items-start gap-2.5 mb-3">
+        <span
+          className={
+            'grid place-items-center w-7 h-7 rounded-lg border shrink-0 ' +
+            (danger ? 'border-rose-500/30 bg-rose-500/10 text-rose-300' : 'border-accent-border bg-accent-dim text-accent-light')
+          }
+        >
+          {icon}
+        </span>
+        <div className="min-w-0">
+          <h2 className="font-display text-[14px] font-bold tracking-tight leading-tight">{title}</h2>
+          <p className="text-[11.5px] text-muted mt-0.5 leading-snug">{description}</p>
+        </div>
+      </div>
+      <div className="card px-4 md:px-5">{children}</div>
+    </section>
+  );
+}
+
+function Row({ label, hint, children, stacked }: {
+  label: string;
+  hint?: string;
+  children: ReactNode;
+  stacked?: boolean;
+}) {
+  return (
+    <div
+      className={
+        'py-3.5 border-b border-border last:border-0 ' +
+        (stacked ? 'flex flex-col gap-2.5 md:flex-row md:items-center md:justify-between md:gap-6' : 'flex items-center justify-between gap-6')
+      }
+    >
+      <div className="min-w-0">
+        <div className="text-[12.5px] font-medium">{label}</div>
+        {hint && <div className="text-[11px] text-muted mt-0.5 leading-snug max-w-md">{hint}</div>}
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  );
+}
+
+/** Render an accelerator ("CommandOrControl+Shift+Backslash") as keycaps. */
+function HotkeyCaps({ accel }: { accel: string }) {
+  const tokens = useMemo(() => accel.split('+').map((t) => {
+    if (t === 'CommandOrControl' || t === 'CmdOrCtrl') return MOD_KEY;
+    if (t === 'Command' || t === 'Super' || t === 'Meta') return MOD_KEY;
+    if (t === 'Control') return 'Ctrl';
+    // Friendly glyphs for keys whose accelerator token is verbose.
+    if (t === 'Backslash') return '\\';
+    if (t === 'Backquote') return '`';
+    if (t === 'Space') return 'Space';
+    return t;
+  }), [accel]);
+  return (
+    <span className="inline-flex items-center gap-1">
+      {tokens.map((t, i) => (
+        <span key={i} className="inline-flex items-center gap-1">
+          {i > 0 && <span className="text-[9px] text-subtle">+</span>}
+          <Kbd>{t}</Kbd>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+// ─── View ───────────────────────────────────────────────────────────────────
 
 export default function SettingsView() {
   const settings = useUiStore((s) => s.settings);
@@ -56,10 +218,40 @@ export default function SettingsView() {
   const [autostart, setAutostart] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [hotkeyError, setHotkeyError] = useState<string | null>(null);
+  const [active, setActive] = useState<SectionId>('search');
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (isTauri) void bridge.isAutostartEnabled().then(setAutostart).catch(() => undefined);
   }, []);
+
+  // Scroll-spy: highlight the rail item for the section nearest the top.
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible[0]) {
+          const id = visible[0].target.id.replace('settings-', '') as SectionId;
+          setActive(id);
+        }
+      },
+      { root, rootMargin: '0px 0px -65% 0px', threshold: 0 },
+    );
+    for (const s of SECTIONS) {
+      const el = document.getElementById(`settings-${s.id}`);
+      if (el) observer.observe(el);
+    }
+    return () => observer.disconnect();
+  }, []);
+
+  const jumpTo = (id: SectionId) => {
+    document.getElementById(`settings-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setActive(id);
+  };
 
   // Hotkey capture: press the combo, register it, persist only on success.
   useEffect(() => {
@@ -68,16 +260,22 @@ export default function SettingsView() {
       e.preventDefault();
       e.stopPropagation();
       if (e.key === 'Escape') { setCapturing(false); return; }
-      const parts: string[] = [];
-      if (e.ctrlKey) parts.push('Control');
-      if (e.metaKey) parts.push('Super');
-      if (e.altKey) parts.push('Alt');
-      if (e.shiftKey) parts.push('Shift');
-      if (!['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) {
-        parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key);
-      }
-      if (parts.length < 2) return; // need at least one modifier + a key
-      const accel = parts.join('+');
+
+      const mods: string[] = [];
+      if (e.ctrlKey) mods.push('Control');
+      if (e.metaKey) mods.push('Super');
+      if (e.altKey) mods.push('Alt');
+      if (e.shiftKey) mods.push('Shift');
+
+      // Only a modifier pressed so far — keep listening.
+      if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return;
+      if (mods.length === 0) return; // a global hotkey needs at least one modifier
+
+      // Use the PHYSICAL key code, not e.key: Shift+`\` reports "|", Shift+/ "/"
+      // reports "?", and the accelerator parser only understands key names.
+      const main = e.code && e.code !== 'Unidentified' ? e.code : e.key;
+      const accel = [...mods, main].join('+');
+
       setCapturing(false);
       void bridge.registerHotkey(accel)
         .then((ok) => {
@@ -95,6 +293,21 @@ export default function SettingsView() {
     return () => window.removeEventListener('keydown', onKey, true);
   }, [capturing, patchSettings]);
 
+  // Restore the shipped default, re-registering it with the OS.
+  const resetHotkey = () => {
+    setHotkeyError(null);
+    void bridge.registerHotkey(DEFAULT_SETTINGS_FALLBACK.hotkey)
+      .then((ok) => {
+        if (ok) {
+          patchSettings({ hotkey: DEFAULT_SETTINGS_FALLBACK.hotkey });
+          pushToast.success('Hotkey reset', DEFAULT_SETTINGS_FALLBACK.hotkey);
+        } else {
+          setHotkeyError('Could not register the default shortcut — it may be taken by another app.');
+        }
+      })
+      .catch((err) => setHotkeyError(err instanceof Error ? err.message : String(err)));
+  };
+
   const signOutFlow = () => askConfirm({
     title: 'Lock and sign out?',
     message: 'The vault key is discarded and your Firebase session ends. You will need to sign in again.',
@@ -106,111 +319,213 @@ export default function SettingsView() {
     },
   });
 
+  const idle = settings.idleLockMinutes ?? 0;
+  const hidden = settings.hiddenLockMinutes ?? 0;
+
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="max-w-xl mx-auto p-6">
-        <PageHeader title="Settings" subtitle="Local, non-secret preferences. Vault data stays encrypted in Firestore." />
-
-        <Card title="Quick search">
-          <Row title="Global hotkey" hint={isTauri ? 'Opens the quick popup from anywhere. Click to re-record; Esc cancels.' : 'Only available inside the desktop shell.'}>
-            <button
-              className={'btn-ghost font-mono text-[12px] min-w-[190px] ' + (capturing ? 'border-accent-border text-accent-light' : '')}
-              onClick={() => { setHotkeyError(null); setCapturing(true); }}
-              disabled={!isTauri}
-            >
-              {capturing ? 'Press keys… (Esc cancels)' : settings.hotkey}
-            </button>
-          </Row>
-          <Row title="Launch at login" hint={isTauri ? 'Start Scync in the tray when you log in.' : 'Only available inside the desktop shell.'}>
-            <Toggle
-              on={autostart}
-              disabled={!isTauri}
-              onChange={(v) => {
-                if (!isTauri) return;
-                void bridge.toggleAutostart(v)
-                  .then(() => { setAutostart(v); pushToast.success(v ? 'Launch at login enabled' : 'Launch at login disabled'); })
-                  .catch((e) => pushToast.error('Autostart failed', e instanceof Error ? e.message : String(e)));
-              }}
-            />
-          </Row>
-        </Card>
-
-        <Card title="Locking">
-          <Row title="Idle lock" hint="Lock the vault after this many minutes without keyboard or mouse activity. 0 disables.">
-            <NumberField value={settings.idleLockMinutes ?? 0} min={0} max={240} suffix="min" onChange={(v) => patchSettings({ idleLockMinutes: v })} />
-          </Row>
-          <Row title="Lock when hidden" hint="Lock when the main window has been hidden to the tray for this many minutes. 0 disables.">
-            <NumberField value={settings.hiddenLockMinutes ?? 0} min={0} max={240} suffix="min" onChange={(v) => patchSettings({ hiddenLockMinutes: v })} />
-          </Row>
-        </Card>
-
-        <Card title="Clipboard">
-          <Row title="Auto-clear" hint="Copied secrets and codes are cleared from the clipboard after this many seconds (only if the clipboard still holds the copied value). 0 disables.">
-            <NumberField value={settings.clipboardClearSecs} min={0} max={300} suffix="sec" onChange={(v) => patchSettings({ clipboardClearSecs: v })} />
-          </Row>
-        </Card>
-
-        <Card title="Privacy">
-          <Row title="Content protection" hint="Prevents screen capture and appearing in screen recordings (Windows: WDA_EXCLUDEFROMCAPTURE). Applied live.">
-            <Toggle on={settings.contentProtection} onChange={(v) => patchSettings({ contentProtection: v })} />
-          </Row>
-        </Card>
-
-        {hotkeyError && (
-          <div className="flex items-start gap-2 text-[12px] text-rose-400 -mt-2 mb-4">
-            <FiAlertTriangle size={13} className="mt-0.5 shrink-0" /> {hotkeyError}
+    <div ref={scrollRef} className="h-full overflow-y-auto">
+      <div className="mx-auto w-full max-w-5xl px-6 py-6">
+        {/* Header */}
+        <div className="mb-6">
+          <div className="mono-label flex items-center gap-1.5 mb-1.5">
+            <span className="text-accent/70">//</span> preferences
           </div>
-        )}
+          <h1 className="font-display text-[20px] font-bold tracking-tight">Settings</h1>
+          <p className="text-[12.5px] text-muted mt-1">
+            Local, non-secret preferences. Your vault stays encrypted in Firestore.
+          </p>
+        </div>
 
-        <Card title="Session">
-          <Row title="Lock vault" hint="Discard the derived key immediately. The auth session survives; unlock needs only your master password.">
-            <button className="btn-ghost" onClick={() => { lockNow('manual'); }}>
-              <FiCheck size={13} /> Lock now
-            </button>
-          </Row>
-          <Row title="Sign out" hint="End the Firebase session and lock the vault.">
-            <button className="btn-ghost hover:!text-rose-300 hover:!border-rose-500/40" onClick={signOutFlow}>
-              <FiLogOut size={13} /> Sign out
-            </button>
-          </Row>
-        </Card>
-
-        <Card title="About">
-          <Row title="Scync Desktop" hint="Version, crypto stack, and provenance notes.">
-            <div className="flex items-center gap-2">
-              <span className="chip">v{APP_VERSION}</span>
-              <button className="btn-ghost !px-2.5" onClick={() => useUiStore.getState().setAboutOpen(true)}>Open</button>
+        <div className="grid gap-6 md:gap-8 md:grid-cols-[180px_minmax(0,1fr)]">
+          {/* Category rail */}
+          <nav className="hidden md:block">
+            <div className="sticky top-0 space-y-0.5">
+              <div className="mono-label px-2.5 mb-2">On this page</div>
+              {SECTIONS.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => jumpTo(s.id)}
+                  className={
+                    'w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-[12.5px] text-left transition-colors ' +
+                    (active === s.id
+                      ? 'bg-accent-dim text-accent-light border border-accent-border'
+                      : 'text-muted hover:text-text hover:bg-white/[0.04] border border-transparent')
+                  }
+                >
+                  {s.icon}
+                  <span className="flex-1">{s.label}</span>
+                  {active === s.id && <FiChevronRight size={12} />}
+                </button>
+              ))}
             </div>
-          </Row>
-          <Row title="Source" hint="Open-source, MIT licensed — read the code that guards your vault.">
-            <button className="btn-ghost" onClick={() => openExternal('https://github.com/hariharen9/Scync-Desktop')}>
-              <FiExternalLink size={13} /> GitHub
-            </button>
-          </Row>
-        </Card>
+          </nav>
 
-        <p className="mono-label text-center flex items-center justify-center gap-2 pb-2">
-          <FiPower size={10} /> Scync {APP_VERSION} · zero-knowledge · no telemetry
-        </p>
+          {/* Content */}
+          <div className="min-w-0">
+            <Section id="search" title="Quick search" description="Summon the popup from anywhere on your desktop." icon={<FiCommand size={14} />}>
+              <Row
+                stacked
+                label="Global hotkey"
+                hint={isTauri ? 'Opens quick search from any app. Click change, then press a combination; Esc cancels.' : 'Only available inside the desktop shell.'}
+              >
+                <div className="flex items-center gap-2">
+                  <div className={'rounded-lg border px-2.5 py-1.5 ' + (capturing ? 'border-accent-border bg-accent-dim' : 'border-border bg-black/30')}>
+                    {capturing ? <span className="text-[11.5px] text-accent-light">Press keys…</span> : <HotkeyCaps accel={settings.hotkey} />}
+                  </div>
+                  <button
+                    className="btn-ghost !py-1.5 !px-3 !text-[12px]"
+                    onClick={() => { setHotkeyError(null); setCapturing(true); }}
+                    disabled={!isTauri || capturing}
+                  >
+                    {capturing ? 'Listening…' : 'Change'}
+                  </button>
+                  <button
+                    className="btn-ghost !py-1.5 !px-2.5 !text-[12px]"
+                    onClick={resetHotkey}
+                    disabled={!isTauri || capturing || settings.hotkey === DEFAULT_SETTINGS_FALLBACK.hotkey}
+                    title="Restore the default shortcut"
+                  >
+                    <FiRotateCcw size={13} />
+                  </button>
+                </div>
+              </Row>
+              <Row label="Launch at login" hint={isTauri ? 'Start Scync in the tray when you sign in.' : 'Only available inside the desktop shell.'}>
+                <Toggle
+                  on={autostart}
+                  disabled={!isTauri}
+                  onChange={(v) => {
+                    if (!isTauri) return;
+                    void bridge.toggleAutostart(v)
+                      .then(() => { setAutostart(v); pushToast.success(v ? 'Launch at login enabled' : 'Launch at login disabled'); })
+                      .catch((e) => pushToast.error('Autostart failed', e instanceof Error ? e.message : String(e)));
+                  }}
+                />
+              </Row>
+            </Section>
+
+            <Section id="locking" title="Locking" description="When the vault should re-lock and drop the key from memory." icon={<FiLock size={14} />}>
+              <Row stacked label="Idle lock" hint="Lock after this long without keyboard or mouse activity.">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Segmented value={idle} options={TIME_PRESETS} onChange={(v) => patchSettings({ idleLockMinutes: v })} />
+                  {!TIME_PRESETS.some((p) => p.value === idle) && (
+                    <Stepper value={idle} min={0} max={240} suffix="min" onChange={(v) => patchSettings({ idleLockMinutes: v })} />
+                  )}
+                </div>
+              </Row>
+              <Row stacked label="Lock when hidden" hint="Lock when the main window has been hidden to the tray for this long.">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Segmented value={hidden} options={TIME_PRESETS} onChange={(v) => patchSettings({ hiddenLockMinutes: v })} />
+                  {!TIME_PRESETS.some((p) => p.value === hidden) && (
+                    <Stepper value={hidden} min={0} max={240} suffix="min" onChange={(v) => patchSettings({ hiddenLockMinutes: v })} />
+                  )}
+                </div>
+              </Row>
+            </Section>
+
+            <Section id="clipboard" title="Clipboard" description="Copied values are wiped automatically after a delay." icon={<FiClipboard size={14} />}>
+              <Row
+                stacked
+                label="Auto-clear after copy"
+                hint="The clipboard is cleared only if it still holds the value we copied. 0 disables."
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <Segmented value={settings.clipboardClearSecs} options={CLIP_PRESETS} onChange={(v) => patchSettings({ clipboardClearSecs: v })} />
+                  {!CLIP_PRESETS.some((p) => p.value === settings.clipboardClearSecs) && (
+                    <Stepper value={settings.clipboardClearSecs} min={0} max={300} suffix="sec" onChange={(v) => patchSettings({ clipboardClearSecs: v })} />
+                  )}
+                </div>
+              </Row>
+            </Section>
+
+            <Section id="privacy" title="Privacy" description="Reduce what can leak from this window." icon={<FiShield size={14} />}>
+              <Row stacked label="Content protection" hint="Excludes the window from screen capture and recordings (Windows: WDA_EXCLUDEFROMCAPTURE). Applied live.">
+                <div className="flex items-center gap-2.5">
+                  <span className={'mono-label ' + (settings.contentProtection ? 'text-accent-light' : '')}>
+                    {settings.contentProtection ? 'On' : 'Off'}
+                  </span>
+                  <Toggle on={settings.contentProtection} onChange={(v) => patchSettings({ contentProtection: v })} />
+                </div>
+              </Row>
+            </Section>
+
+            {hotkeyError && (
+              <div className="mb-4 flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/[0.06] px-3 py-2 text-[12px] text-rose-300">
+                <FiAlertTriangle size={13} className="mt-0.5 shrink-0" /> {hotkeyError}
+              </div>
+            )}
+
+            <Section id="session" title="Session" description="Lock the vault or end this session." icon={<FiLogOut size={14} />} danger>
+              <Row label="Lock vault" hint="Drops the derived key immediately. Unlocking needs only your master password.">
+                <button
+                  className="btn-ghost"
+                  onClick={() => { lockNow('manual'); pushToast.success('Vault locked', 'Key discarded from memory'); }}
+                >
+                  <FiCheck size={13} /> Lock now
+                </button>
+              </Row>
+              <Row label="Sign out" hint="Ends the Firebase session and locks the vault. You will need to sign in again.">
+                <button className="btn-ghost hover:!text-rose-300 hover:!border-rose-500/40" onClick={signOutFlow}>
+                  <FiLogOut size={13} /> Sign out
+                </button>
+              </Row>
+            </Section>
+
+            <Section id="about" title="About" description="Version, provenance, and source." icon={<FiInfo size={14} />}>
+              <div className="flex items-center gap-3 py-3.5 border-b border-border">
+                <BrandMark size={30} glow />
+                <div className="min-w-0 flex-1">
+                  <div className="text-[12.5px] font-semibold">Scync Desktop</div>
+                  <div className="mono-label mt-0.5">v{APP_VERSION} · MIT · zero-knowledge</div>
+                </div>
+                <button className="btn-ghost !px-3 !py-1.5 !text-[12px]" onClick={() => useUiStore.getState().setAboutOpen(true)}>
+                  Details
+                </button>
+              </div>
+
+              <Row label="Designed & built by" hint="Scync Desktop is crafted by Hariharen — visit the portfolio to see more work.">
+                <button className="btn-ghost !py-1.5 !px-3 !text-[12px]" onClick={() => openExternal(CREATOR_URL)}>
+                  <FiGlobe size={13} /> Hariharen <FiExternalLink size={11} />
+                </button>
+              </Row>
+              <Row label="Source code" hint="Open-source and MIT licensed — read the code that guards your vault.">
+                <button className="btn-ghost !py-1.5 !px-3 !text-[12px]" onClick={() => openExternal('https://github.com/hariharen9/Scync-Desktop')}>
+                  <FiGithub size={13} /> GitHub <FiExternalLink size={11} />
+                </button>
+              </Row>
+              <Row label="Documentation" hint="Interop guarantees, threat model, and decisions.">
+                <button className="btn-ghost !py-1.5 !px-3 !text-[12px]" onClick={() => openExternal('https://scync.space')}>
+                  scync.space <FiExternalLink size={11} />
+                </button>
+              </Row>
+            </Section>
+
+            <div className="rounded-xl border border-accent-border bg-accent-dim/40 px-4 py-3 mb-4 flex items-center gap-3">
+              <span className="grid place-items-center w-9 h-9 rounded-full bg-accent/20 border border-accent-border text-accent-light font-display font-extrabold text-[14px] shrink-0">
+                H
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] font-mono uppercase tracking-[0.09em] text-subtle">Designed &amp; built by</div>
+                <button
+                  className="text-[13.5px] font-semibold text-text hover:text-accent-light transition-colors inline-flex items-center gap-1.5"
+                  onClick={() => openExternal(CREATOR_URL)}
+                >
+                  Hariharen <FiExternalLink size={11} className="text-subtle" />
+                </button>
+              </div>
+              <button
+                className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-accent-border bg-black/20 px-2.5 py-1.5 text-[11.5px] text-accent-light hover:bg-accent-dim transition-colors"
+                onClick={() => openExternal(CREATOR_URL)}
+              >
+                <FiGlobe size={11} /> hariharen.space
+              </button>
+            </div>
+
+            <p className="mono-label flex items-center gap-2 pt-1 pb-2">
+              <FiPower size={10} /> Scync {APP_VERSION} · no telemetry · no server-side keys
+            </p>
+          </div>
+        </div>
       </div>
-    </div>
-  );
-}
-
-function NumberField({ value, min, max, suffix, onChange }: {
-  value: number; min: number; max: number; suffix: string; onChange: (v: number) => void;
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <input
-        className="field !w-20 text-right font-mono"
-        type="number"
-        min={min}
-        max={max}
-        value={value}
-        onChange={(e) => onChange(Math.max(min, Math.min(max, Number(e.target.value) || 0)))}
-      />
-      <span className="mono-label w-7">{suffix}</span>
     </div>
   );
 }

@@ -105,7 +105,7 @@ pub fn toggle_quick(app: AppHandle) {
                 let mp = m.position();
                 let ms = m.size();
                 let window_w = 640.0;
-                let window_h = 460.0;
+                let window_h = 540.0;
                 let scale = m.scale_factor();
                 let x = mp.x as f64 + (ms.width as f64 / scale - window_w) / 2.0;
                 let y = mp.y as f64 + (ms.height as f64 / scale - window_h) * 0.3;
@@ -147,18 +147,35 @@ pub fn show_main(app: &AppHandle) {
 
 /// Register `accelerator` as the global hotkey, replacing any previous one.
 /// Returns Ok(true) if registered, Ok(false) if the accelerator is invalid,
-/// and an Err if registration failed (e.g. already taken).
+/// and an Err if registration failed (e.g. already taken). On failure the
+/// previous binding is restored, so a bad attempt never leaves the app with
+/// no shortcut at all.
 #[tauri::command]
 pub fn register_hotkey(app: AppHandle, accelerator: String) -> Result<bool, String> {
-    let (s, conflict) = register_shortcut(&app, &accelerator);
-    if conflict {
-        Err(format!("'{accelerator}' could not be registered (already taken?). Pick another."))
-    } else {
-        // Persist only after successful registration.
-        let mut settings = settings::load(&app);
-        settings.hotkey = s.to_string();
-        settings::save(&app, &settings).map_err(|e| e.to_string())?;
-        Ok(true)
+    // Parse before touching the live binding: an invalid string must never
+    // tear down a shortcut that currently works.
+    let shortcut = accelerator
+        .parse::<Shortcut>()
+        .map_err(|_| format!("'{accelerator}' is not a valid shortcut."))?;
+
+    let previous = settings::load(&app).hotkey;
+    let gs = app.global_shortcut();
+
+    // Release the current binding so the new one can take it.
+    let _ = gs.unregister_all();
+
+    match gs.register(shortcut) {
+        Ok(()) => {
+            let mut settings = settings::load(&app);
+            settings.hotkey = accelerator;
+            settings::save(&app, &settings).map_err(|e| e.to_string())?;
+            Ok(true)
+        }
+        Err(_) => {
+            // Restore the previous binding so the popup keeps working.
+            let _ = register_shortcut(&app, &previous);
+            Err(format!("'{accelerator}' is taken by another app. Pick another shortcut."))
+        }
     }
 }
 

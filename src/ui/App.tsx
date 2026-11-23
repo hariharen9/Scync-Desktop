@@ -12,7 +12,7 @@ import { armAutoLock, lockNow, disarmAutoLock } from '@/lib/autoLock.js';
 import { listen, emit } from '@/auth/bridge.js';
 import { bridge } from '@/auth/bridge.js';
 import { ensureAuthReady } from '@/backend/firebase.js';
-import { searchItems } from '@/lib/search.js';
+import { recentItems, searchItems } from '@/lib/search.js';
 import { BrandMark, Spinner } from './components/primitives.js';
 
 import SignInScreen from './screens/SignInScreen.js';
@@ -144,16 +144,23 @@ export default function App() {
   // ─── Quick popup answering (this window holds the vault; the popup never
   // sees plaintext) ───
   useEffect(() => {
+    // Build the metadata payload for a query. An empty query returns the
+    // recent items so the popup has something useful the instant it opens.
+    const answer = (q: string) => {
+      const phase = useVaultStore.getState().lockPhase;
+      const locked = phase !== 'unlocked';
+      const index = locked ? [] : useDataStore.getState().metaIndex();
+      void emit('quick:results', {
+        items: locked ? [] : q.trim() ? searchItems(index, q) : recentItems(index),
+        locked,
+        ready: true,
+      });
+    };
+
     const stops = [
-      listen<{ q: string }>('quick:query', ({ q }) => {
-        const phase = useVaultStore.getState().lockPhase;
-        const locked = phase !== 'unlocked';
-        void emit('quick:results', {
-          items: locked ? [] : searchItems(useDataStore.getState().metaIndex(), q),
-          locked,
-          ready: true,
-        });
-      }),
+      listen<{ q: string }>('quick:query', ({ q }) => answer(q)),
+      // The popup cleared its state on show; don't make it wait for a keystroke.
+      listen<null>('quick:shown', () => answer('')),
       listen<{ id: string; kind: string; field: string }>('quick:copy', ({ id, kind, field }) => {
         void (async () => {
           try {

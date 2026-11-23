@@ -13,7 +13,7 @@ export interface SettingsFile {
 }
 
 export const DEFAULT_SETTINGS_FALLBACK: SettingsFile = {
-  hotkey: 'CommandOrControl+Shift+Space',
+  hotkey: 'CommandOrControl+Shift+Backslash',
   idleLockMinutes: 5,
   hiddenLockMinutes: 5,
   clipboardClearSecs: 20,

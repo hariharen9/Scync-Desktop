@@ -95,3 +95,13 @@ export function secondaryLabel(kind: QuickSearchItem['kind']): string | null {
   const fields = fieldsFor(kind);
   return fields.length > 1 ? fields[1].label : null;
 }
+
+/**
+ * The popup's idle list: the most recently touched items, newest first.
+ * Metadata only — the same index `searchItems` ranks.
+ */
+export function recentItems(items: QuickSearchItem[], limit = 8): QuickSearchItem[] {
+  return [...items]
+    .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+    .slice(0, limit);
+}

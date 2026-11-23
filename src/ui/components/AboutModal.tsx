@@ -1,8 +1,10 @@
-import { FiExternalLink, FiGithub, FiShield, FiZap, FiLock } from 'react-icons/fi';
+import { FiExternalLink, FiGithub, FiGlobe, FiHeart, FiShield, FiZap, FiLock } from 'react-icons/fi';
 import { useUiStore } from '@/stores/uiStore.js';
 import { openExternal } from '@/auth/bridge.js';
 import { APP_VERSION } from '@/lib/version.js';
 import { BrandMark, useEscape } from './primitives.js';
+
+const CREATOR_URL = 'https://hariharen.space';
 
 const FACTS = [
   { icon: <FiLock size={13} />, title: 'AES-256-GCM', body: 'Every value is sealed client-side before it leaves this device.' },
@@ -19,12 +21,12 @@ export default function AboutModal() {
   return (
     <div className="modal-overlay" onClick={() => setAboutOpen(false)}>
       <div className="modal-panel card w-full max-w-sm p-6 anim-scale-in" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center gap-3 mb-5">
-          <BrandMark size={44} glow />
-          <div>
+        <div className="mb-5">
+          <div className="flex items-center gap-3">
+            <BrandMark size={36} glow />
             <div className="font-display font-extrabold tracking-tight text-[16px]">Scync Desktop</div>
-            <div className="mono-label">v{APP_VERSION} · MIT</div>
           </div>
+          <div className="mono-label mt-1 pl-[48px]">v{APP_VERSION} · MIT</div>
         </div>
 
         <p className="text-muted text-[13px] leading-relaxed">
@@ -46,7 +48,29 @@ export default function AboutModal() {
           ))}
         </div>
 
-        <div className="flex items-center justify-between mt-6 pt-4 border-t border-border">
+        {/* Creator credit */}
+        <div className="mt-5 rounded-xl border border-accent-border bg-accent-dim/40 px-3.5 py-3">
+          <div className="flex items-center gap-2.5">
+            <span className="grid place-items-center w-8 h-8 rounded-full bg-accent/20 border border-accent-border text-accent-light font-display font-extrabold text-[13px] shrink-0">
+              H
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[10px] font-mono uppercase tracking-[0.09em] text-subtle">Designed &amp; built by</div>
+              <div className="text-[13.5px] font-semibold text-text leading-tight">Hariharen</div>
+            </div>
+          </div>
+          <button
+            className="mt-2.5 w-full flex items-center justify-center gap-1.5 rounded-lg border border-accent-border bg-black/20 px-3 py-1.5 text-[11.5px] text-accent-light hover:bg-accent-dim transition-colors"
+            onClick={() => openExternal(CREATOR_URL)}
+          >
+            <FiGlobe size={11} /> hariharen.space <FiExternalLink size={10} />
+          </button>
+          <p className="text-[10.5px] text-subtle text-center mt-2 flex items-center justify-center gap-1">
+            Made with <FiHeart size={9} className="text-rose-400" /> for people who keep secrets
+          </p>
+        </div>
+
+        <div className="flex items-center justify-between mt-5 pt-4 border-t border-border">
           <button
             className="text-[12px] text-muted hover:text-text flex items-center gap-1.5 transition-colors"
             onClick={() => openExternal('https://github.com/hariharen9/Scync-Desktop')}

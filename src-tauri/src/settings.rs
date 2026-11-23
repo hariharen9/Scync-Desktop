@@ -8,7 +8,14 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::Manager;
 
-pub const DEFAULT_HOTKEY: &str = "CommandOrControl+Shift+Space";
+// Ctrl/Cmd+Shift+Space (1Password's binding) and Ctrl+Space (VS Code parameter
+// hints, Windows IME) are commonly taken, so the default uses Backslash: no
+// binding on Windows or macOS, and not used by the major browsers.
+pub const DEFAULT_HOTKEY: &str = "CommandOrControl+Shift+Backslash";
+
+/// The previous default. Users who never changed it are moved to the new one,
+/// since the old binding silently failed to register on common setups.
+const LEGACY_DEFAULT_HOTKEY: &str = "CommandOrControl+Shift+Space";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -48,7 +55,13 @@ fn settings_path(app: &tauri::AppHandle) -> PathBuf {
 pub fn load(app: &tauri::AppHandle) -> Settings {
     let path = settings_path(app);
     match fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
+        Ok(text) => {
+            let mut settings: Settings = serde_json::from_str(&text).unwrap_or_default();
+            if settings.hotkey == LEGACY_DEFAULT_HOTKEY {
+                settings.hotkey = DEFAULT_HOTKEY.into();
+            }
+            settings
+        }
         Err(_) => Settings::default(),
     }
 }

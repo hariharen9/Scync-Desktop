@@ -88,12 +88,12 @@ export default function SignInScreen() {
               style={{ background: 'radial-gradient(circle, rgba(16,185,129,0.16), transparent 70%)' }}
             />
             <div className="relative">
-              <div className="flex items-center gap-2.5 mb-9">
-                <BrandMark size={34} glow />
-                <div className="leading-none">
+              <div className="mb-9">
+                <div className="flex items-center gap-2.5">
+                  <BrandMark size={30} glow />
                   <Wordmark />
-                  <div className="mono-label mt-1">desktop</div>
                 </div>
+                <div className="mono-label mt-1 pl-[42px]">desktop</div>
               </div>
 
               <div className="mono-label flex items-center gap-1.5 mb-2">

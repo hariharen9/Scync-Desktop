@@ -132,6 +132,8 @@ export interface QuickSearchItem {
   environment: string;
   project: string;
   status: string;
+  /** Sort key for the popup's "recent" list (epoch ms). */
+  updatedAt?: number;
 }
 
 const EMPTY: DomainState = {
@@ -403,6 +405,7 @@ export const useDataStore = create<DataState>((set, get) => ({
         environment: secret.environment,
         project: projectName(secret.projectId),
         status: secret.status,
+        updatedAt: secret.updatedAt.getTime(),
       });
     }
     for (const pw of s.passwords) {
@@ -414,6 +417,7 @@ export const useDataStore = create<DataState>((set, get) => ({
         environment: '',
         project: '',
         status: '',
+        updatedAt: pw.updatedAt.getTime(),
       });
     }
     for (const k of s.sshKeys) {
@@ -425,6 +429,7 @@ export const useDataStore = create<DataState>((set, get) => ({
         environment: k.hosts.join(' '),
         project: '',
         status: '',
+        updatedAt: k.updatedAt.getTime(),
       });
     }
     for (const t of s.totpTokens) {
@@ -436,6 +441,7 @@ export const useDataStore = create<DataState>((set, get) => ({
         environment: '',
         project: '',
         status: '',
+        updatedAt: t.updatedAt.getTime(),
       });
     }
     for (const c of s.certificates) {
@@ -447,6 +453,7 @@ export const useDataStore = create<DataState>((set, get) => ({
         environment: c.hosts.join(' '),
         project: '',
         status: '',
+        updatedAt: c.updatedAt.getTime(),
       });
     }
     return items;

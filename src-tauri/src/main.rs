@@ -71,7 +71,7 @@ fn main() {
                 tauri::WebviewUrl::App("quick.html".into()),
             )
             .title("Scync Quick Search")
-            .inner_size(640.0, 460.0)
+            .inner_size(640.0, 540.0)
             .visible(false)
             .decorations(false)
             .transparent(true)

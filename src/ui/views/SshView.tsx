@@ -1,12 +1,14 @@
 /** SshView — SSH keys with fingerprint, hosts, and reveal-on-click keys. */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FiPlus, FiSearch, FiTerminal, FiX } from 'react-icons/fi';
+import { FiEdit2, FiTerminal, FiTrash2 } from 'react-icons/fi';
 import { useUiStore } from '@/stores/uiStore.js';
 import { useDataStore } from '@/stores/dataStore.js';
-import { DetailActions, DetailRow, EmptyState, PageHeader, RevealValue, formatDate } from '@/ui/components/common.js';
+import { AlertBlock, EmptyState, RevealValue, formatDate } from '@/ui/components/common.js';
 import { Chip, CopyIconButton, ListSkeleton } from '@/ui/components/primitives.js';
+import { DetailBody, DetailHeader, ListHeader, MasterDetail, MetaCell, MetaGrid, SearchField } from '@/ui/components/masterDetail.js';
 import { copyToSystemClipboard } from '@/lib/clipboard.js';
 import { pushToast } from '@/ui/components/Toast.js';
+import type { StoredSSHKey } from '@/backend/index.js';
 
 export default function SshView() {
   const sshKeys = useDataStore((s) => s.sshKeys);
@@ -24,7 +26,7 @@ export default function SshView() {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [sshKeys, query]);
 
-  const selected = sorted.find((k) => k.id === selectedId) ?? null;
+  const selected = sshKeys.find((k) => k.id === selectedId) ?? null;
   const hasFilter = query.trim() !== '';
 
   useEffect(() => {
@@ -46,132 +48,149 @@ export default function SshView() {
   }, [sorted, selectedId, selectSecret]);
 
   return (
-    <div className="h-full flex">
-      <div className="w-[340px] shrink-0 border-r border-border flex flex-col">
-        <div className="p-4 pb-2">
-          <PageHeader
+    <MasterDetail
+      hasSelection={Boolean(selected)}
+      list={() => (
+        <>
+          <ListHeader
             title="SSH keys"
             subtitle={`${sorted.length} key${sorted.length === 1 ? '' : 's'}`}
-            actions={<button className="btn-primary !py-1.5 !px-3 text-[12px]" onClick={() => openForm('ssh')}><FiPlus size={13} /> New</button>}
-          />
-          {sshKeys.length > 0 && (
-            <div className="relative">
-              <FiSearch size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-subtle pointer-events-none" />
-              <input
-                ref={searchRef}
-                className="field pl-9 pr-9"
-                placeholder="Filter keys…"
+            onNew={() => openForm('ssh')}
+          >
+            {sshKeys.length > 0 && (
+              <SearchField
+                inputRef={searchRef}
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Escape') { setQuery(''); e.currentTarget.blur(); } }}
+                onChange={setQuery}
+                placeholder="Filter keys…"
               />
-              {query ? (
-                <button className="absolute right-2.5 top-1/2 -translate-y-1/2 text-subtle hover:text-text" onClick={() => setQuery('')} aria-label="Clear"><FiX size={13} /></button>
-              ) : (
-                <span className="kbd absolute right-2.5 top-1/2 -translate-y-1/2">/</span>
-              )}
-            </div>
-          )}
-        </div>
-        <div className="flex-1 overflow-y-auto px-2 pb-3">
-          {!loaded.sshKeys ? (
-            <ListSkeleton rows={6} />
-          ) : sorted.length === 0 ? (
-            <div className="text-center px-4 mt-10">
-              <p className="text-[12.5px] text-muted">{hasFilter ? 'No keys match.' : 'No SSH keys yet.'}</p>
-              {!hasFilter && <button className="btn-primary !py-1.5 !px-3 text-[12px] mt-3" onClick={() => openForm('ssh')}><FiPlus size={12} /> Add key</button>}
-            </div>
-          ) : (
-            sorted.map((k) => (
-              <button
-                key={k.id}
-                id={`ssh-row-${k.id}`}
-                onClick={() => selectSecret(k.id)}
-                className={'w-full text-left px-2.5 py-2 rounded-lg border mb-0.5 transition-colors ' + (selectedId === k.id ? 'bg-accent-dim border-accent-border' : 'border-transparent hover:bg-white/[0.04]')}
-              >
-                <div className="text-[13px] truncate">{k.name}</div>
-                <div className="text-[11px] text-subtle truncate font-mono">{k.type} · {k.hosts.length} host{k.hosts.length === 1 ? '' : 's'}</div>
-              </button>
-            ))
-          )}
-        </div>
-      </div>
+            )}
+          </ListHeader>
 
-      <div className="flex-1 overflow-y-auto p-6">
-        {selected ? (
-          <SshDetail key={selected.id} id={selected.id} />
-        ) : loaded.sshKeys ? (
-          <EmptyState
-            icon={<FiTerminal size={20} />}
-            title="Select an SSH key"
-            hint="Generate a keypair or paste an existing one — the private key is encrypted client-side."
-          />
-        ) : null}
-      </div>
-    </div>
+          <div className="flex-1 overflow-y-auto px-2 pb-3">
+            {!loaded.sshKeys ? (
+              <ListSkeleton rows={7} />
+            ) : sorted.length === 0 ? (
+              <div className="text-center px-4 mt-12">
+                <p className="text-[12.5px] text-muted">{hasFilter ? 'No keys match.' : 'No SSH keys yet.'}</p>
+                {!hasFilter && <button className="btn-primary !py-1.5 !px-3 text-[12px] mt-3" onClick={() => openForm('ssh')}>Add key</button>}
+              </div>
+            ) : (
+              sorted.map((k) => <SshRow key={k.id} entry={k} selected={k.id === selectedId} onSelect={() => selectSecret(k.id)} />)
+            )}
+          </div>
+        </>
+      )}
+      detail={(compact) => selected ? (
+        <SshDetail key={selected.id} entry={selected} compact={compact} onBack={() => selectSecret(null)} />
+      ) : null}
+      empty={loaded.sshKeys ? (
+        <EmptyState
+          icon={<FiTerminal size={20} />}
+          title="Select an SSH key"
+          hint="Generate a keypair or paste an existing one — the private key is encrypted client-side."
+        />
+      ) : null}
+    />
   );
 }
 
-function SshDetail({ id }: { id: string }) {
-  const stored = useDataStore((s) => s.sshKeys.find((k) => k.id === id));
+function SshRow({ entry, selected, onSelect }: { entry: StoredSSHKey; selected: boolean; onSelect: () => void }) {
+  const rotationDue = entry.rotationDate !== null && entry.rotationDate.getTime() < Date.now();
+  return (
+    <button
+      id={`ssh-row-${entry.id}`}
+      onClick={onSelect}
+      className={
+        'group w-full text-left rounded-lg border px-2.5 py-1.5 mb-0.5 transition-colors ' +
+        (selected ? 'bg-accent-dim border-accent-border' : 'border-transparent hover:bg-white/[0.04]')
+      }
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="text-[12.5px] font-medium truncate flex-1">{entry.name}</span>
+        {rotationDue && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" title="Rotation due" />}
+      </div>
+      <div className="text-[10.5px] text-subtle truncate mt-0.5 font-mono">
+        {entry.type} · {entry.hosts.length} host{entry.hosts.length === 1 ? '' : 's'}
+      </div>
+    </button>
+  );
+}
+
+function SshDetail({ entry, compact, onBack }: {
+  entry: StoredSSHKey;
+  compact: boolean;
+  onBack: () => void;
+}) {
   const openForm = useUiStore((s) => s.openForm);
   const askConfirm = useUiStore((s) => s.askConfirm);
   const selectSecret = useUiStore((s) => s.selectSecret);
   const decryptSshPrivate = useDataStore((s) => s.decryptSshPrivate);
   const removeSshKey = useDataStore((s) => s.removeSshKey);
 
-  if (!stored) return <div className="text-muted text-sm">Key not found.</div>;
-
   const doDelete = () => askConfirm({
     title: 'Delete SSH key',
-    message: `Permanently delete "${stored.name}" (including its private key)? This cannot be undone.`,
+    message: `Permanently delete "${entry.name}" (including its private key)? This cannot be undone.`,
     confirmText: 'Delete',
     danger: true,
     onConfirm: () => {
-      void removeSshKey(stored.id)
+      void removeSshKey(entry.id)
         .then(() => { selectSecret(null); pushToast.success('Key deleted'); })
         .catch((e) => pushToast.fromError(e));
     },
   });
 
-  const rotationDue = stored.rotationDate !== null && stored.rotationDate.getTime() < Date.now();
+  const rotationDue = entry.rotationDate !== null && entry.rotationDate.getTime() < Date.now();
 
   return (
-    <div className="max-w-xl anim-fade-up">
-      <div className="flex items-start justify-between gap-4 mb-4">
-        <div className="min-w-0">
-          <h1 className="font-display text-[19px] font-bold tracking-tight truncate">{stored.name}</h1>
-          <div className="flex items-center gap-1.5 mt-2">
-            <Chip>{stored.type}</Chip>
+    <>
+      <DetailHeader
+        title={entry.name}
+        onBack={compact ? onBack : undefined}
+        badges={
+          <>
+            <Chip>{entry.type}</Chip>
             {rotationDue && <Chip tone="warn">rotation due</Chip>}
-          </div>
-        </div>
-        <DetailActions onEdit={() => openForm('ssh', stored.id)} onDelete={doDelete} />
-      </div>
+          </>
+        }
+        actions={
+          <>
+            <button className="icon-btn" onClick={() => openForm('ssh', entry.id)} title="Edit" aria-label="Edit"><FiEdit2 size={15} /></button>
+            <button className="icon-btn icon-btn-danger" onClick={doDelete} title="Delete" aria-label="Delete"><FiTrash2 size={15} /></button>
+          </>
+        }
+      />
+      <DetailBody>
+        <section className="card p-4 mb-4">
+          <div className="mono-label mb-2">Public key</div>
+          <RevealValue decrypt={() => useDataStore.getState().decryptSshPublic(entry.id)} multiline />
+        </section>
 
-      <div className="card p-4 mb-4">
-        <div className="mono-label mb-2">Public key</div>
-        <RevealValue decrypt={() => useDataStore.getState().decryptSshPublic(id)} multiline />
-      </div>
+        <section className="card p-4 mb-4">
+          <div className="mono-label mb-2">Private key</div>
+          <RevealValue decrypt={() => decryptSshPrivate(entry.id)} multiline copyLabel="Private key copied" />
+        </section>
 
-      <DetailRow label="Fingerprint">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[11px] break-all">{stored.fingerprint}</span>
-          <CopyIconButton size={12} label="Copy fingerprint" onCopy={() => copyToSystemClipboard(stored.fingerprint, 'Fingerprint copied')} />
-        </div>
-      </DetailRow>
-      <DetailRow label="Private key">
-        <RevealValue decrypt={() => decryptSshPrivate(id)} multiline copyLabel="Private key copied" />
-      </DetailRow>
-      <DetailRow label="Hosts">
-        {stored.hosts.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5">
-            {stored.hosts.map((h) => <Chip key={h}>{h}</Chip>)}
-          </div>
-        ) : '—'}
-      </DetailRow>
-      <DetailRow label="Rotation due">{formatDate(stored.rotationDate)}</DetailRow>
-      <DetailRow label="Added">{formatDate(stored.createdAt)}</DetailRow>
-    </div>
+        <MetaGrid>
+          <MetaCell label="Fingerprint" wrap mono>
+            <span className="inline-flex items-center gap-1.5">
+              {entry.fingerprint}
+              <CopyIconButton size={12} label="Copy fingerprint" onCopy={() => copyToSystemClipboard(entry.fingerprint, 'Fingerprint copied')} />
+            </span>
+          </MetaCell>
+          <MetaCell label="Hosts">
+            {entry.hosts.length > 0
+              ? <span className="font-mono text-[11.5px] truncate">{entry.hosts.join(', ')}</span>
+              : <span className="text-subtle">—</span>}
+          </MetaCell>
+          <MetaCell label="Rotation due">
+            {rotationDue
+              ? <AlertBlock tone="warn" icon={<span className="mt-0.5 w-1.5 h-1.5 rounded-full bg-current shrink-0" />}>Due {formatDate(entry.rotationDate)}</AlertBlock>
+              : (entry.rotationDate ? formatDate(entry.rotationDate) : <span className="text-subtle">—</span>)}
+          </MetaCell>
+          <MetaCell label="Added">{formatDate(entry.createdAt)}</MetaCell>
+        </MetaGrid>
+      </DetailBody>
+    </>
   );
 }

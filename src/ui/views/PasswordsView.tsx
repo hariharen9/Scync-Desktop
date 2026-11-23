@@ -1,15 +1,18 @@
-/** PasswordsView — username/password entries with reveal-on-click details. */
+/**
+ * PasswordsView — username/password entries with reveal-on-click details.
+ * Desktop master–detail that collapses to a single pane when narrow.
+ */
 import { useEffect, useMemo, useRef } from 'react';
-import { FiKey, FiPlus, FiSearch, FiX } from 'react-icons/fi';
+import { FiEdit2, FiExternalLink, FiKey, FiTrash2 } from 'react-icons/fi';
 import { useUiStore } from '@/stores/uiStore.js';
 import { useDataStore } from '@/stores/dataStore.js';
-import {
-  DetailActions, DetailRow, EmptyState, PageHeader, RevealValue, SelectFilter, formatDate,
-} from '@/ui/components/common.js';
-import { ListSkeleton } from '@/ui/components/primitives.js';
+import { EmptyState, RevealValue, formatDate } from '@/ui/components/common.js';
+import { CopyIconButton, ListSkeleton } from '@/ui/components/primitives.js';
+import { DetailBody, DetailHeader, ListHeader, MasterDetail, MetaCell, MetaGrid, SearchField } from '@/ui/components/masterDetail.js';
 import { copyToSystemClipboard } from '@/lib/clipboard.js';
 import { pushToast } from '@/ui/components/Toast.js';
 import { openExternal } from '@/auth/bridge.js';
+import type { StoredPassword } from '@/backend/index.js';
 
 export default function PasswordsView() {
   const passwords = useDataStore((s) => s.passwords);
@@ -22,22 +25,22 @@ export default function PasswordsView() {
   const openForm = useUiStore((s) => s.openForm);
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const categories = useMemo(() => [...new Set(passwords.map((p) => p.category))].filter(Boolean).sort(), [passwords]);
+  const categories = useMemo(
+    () => [...new Set(passwords.map((p) => p.category))].filter(Boolean).sort(),
+    [passwords],
+  );
   const filtered = useMemo(() => {
     const q = filter.search.trim().toLowerCase();
     return passwords
       .filter((p) => {
         if (filter.service && p.category !== filter.service) return false;
-        if (q) {
-          const hay = `${p.name} ${p.username} ${p.url} ${p.category}`.toLowerCase();
-          if (!hay.includes(q)) return false;
-        }
+        if (q && !`${p.name} ${p.username} ${p.url} ${p.category}`.toLowerCase().includes(q)) return false;
         return true;
       })
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [passwords, filter]);
 
-  const selected = filtered.find((p) => p.id === selectedId) ?? null;
+  const selected = passwords.find((p) => p.id === selectedId) ?? null;
   const hasFilters = Boolean(filter.search || filter.service);
 
   useEffect(() => {
@@ -59,131 +62,172 @@ export default function PasswordsView() {
   }, [filtered, selectedId, selectSecret]);
 
   return (
-    <div className="h-full flex">
-      <div className="w-[340px] shrink-0 border-r border-border flex flex-col">
-        <div className="p-4 pb-2">
-          <PageHeader
+    <MasterDetail
+      hasSelection={Boolean(selected)}
+      list={() => (
+        <>
+          <ListHeader
             title="Passwords"
-            subtitle={`${filtered.length} of ${passwords.length}`}
-            actions={<button className="btn-primary !py-1.5 !px-3 text-[12px]" onClick={() => openForm('password')}><FiPlus size={13} /> New</button>}
-          />
-          <div className="relative mb-2">
-            <FiSearch size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-subtle pointer-events-none" />
-            <input
-              ref={searchRef}
-              className="field pl-9 pr-9"
-              placeholder="Search login, url, category…"
-              value={filter.search}
-              onChange={(e) => setFilter({ search: e.target.value })}
-              onKeyDown={(e) => { if (e.key === 'Escape') { setFilter({ search: '' }); e.currentTarget.blur(); } }}
-            />
-            {filter.search ? (
-              <button className="absolute right-2.5 top-1/2 -translate-y-1/2 text-subtle hover:text-text" onClick={() => setFilter({ search: '' })} aria-label="Clear search"><FiX size={13} /></button>
+            subtitle={
+              <>
+                {filtered.length} of {passwords.length}
+                {filter.service && <span className="text-accent-light"> · {filter.service}</span>}
+              </>
+            }
+            onNew={() => openForm('password')}
+          >
+            <div className="mb-2">
+              <SearchField
+                inputRef={searchRef}
+                value={filter.search}
+                onChange={(v) => setFilter({ search: v })}
+                placeholder="Search login, url, category…"
+              />
+            </div>
+            {categories.length > 0 && (
+              <div className="flex items-center gap-1.5 overflow-x-auto hide-scrollbar pb-0.5">
+                <button
+                  onClick={() => setFilter({ service: '' })}
+                  className={'shrink-0 rounded-md border px-2 py-1 text-[11.5px] transition-colors ' + (!filter.service ? 'border-accent-border bg-accent-dim text-accent-light' : 'border-border bg-white/[0.03] text-muted hover:text-text hover:border-border-strong')}
+                >
+                  All
+                </button>
+                {categories.map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => setFilter({ service: filter.service === c ? '' : c })}
+                    className={'shrink-0 rounded-md border px-2 py-1 text-[11.5px] transition-colors ' + (filter.service === c ? 'border-accent-border bg-accent-dim text-accent-light' : 'border-border bg-white/[0.03] text-muted hover:text-text hover:border-border-strong')}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            )}
+          </ListHeader>
+
+          <div className="flex-1 overflow-y-auto px-2 pb-3">
+            {!loaded.passwords ? (
+              <ListSkeleton rows={9} />
+            ) : filtered.length === 0 ? (
+              <div className="text-center px-4 mt-12">
+                <p className="text-[12.5px] text-muted">{hasFilters ? 'No entries match.' : 'No passwords yet.'}</p>
+                {hasFilters
+                  ? <button className="text-[11.5px] text-accent-light hover:underline mt-2" onClick={clearFilters}>Clear filters</button>
+                  : <button className="btn-primary !py-1.5 !px-3 text-[12px] mt-3" onClick={() => openForm('password')}>Add password</button>}
+              </div>
             ) : (
-              <span className="kbd absolute right-2.5 top-1/2 -translate-y-1/2">/</span>
+              filtered.map((p) => (
+                <PasswordRow key={p.id} entry={p} selected={p.id === selectedId} onSelect={() => selectSecret(p.id)} />
+              ))
             )}
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            <SelectFilter label="Category" value={filter.service} onChange={(v) => setFilter({ service: v })} options={categories} />
-            {hasFilters && <button className="text-[11px] text-muted hover:text-text px-1.5 self-center" onClick={clearFilters}>clear</button>}
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto px-2 pb-3">
-          {!loaded.passwords ? (
-            <ListSkeleton rows={7} />
-          ) : filtered.length === 0 ? (
-            <div className="text-center px-4 mt-10">
-              <p className="text-[12.5px] text-muted">{hasFilters ? 'No entries match.' : 'No passwords yet.'}</p>
-              {!hasFilters && <button className="btn-primary !py-1.5 !px-3 text-[12px] mt-3" onClick={() => openForm('password')}><FiPlus size={12} /> Add password</button>}
-            </div>
-          ) : (
-            filtered.map((p) => (
-              <button
-                key={p.id}
-                id={`pw-row-${p.id}`}
-                onClick={() => selectSecret(p.id)}
-                className={'w-full text-left px-2.5 py-2 rounded-lg border mb-0.5 transition-colors ' + (selectedId === p.id ? 'bg-accent-dim border-accent-border' : 'border-transparent hover:bg-white/[0.04]')}
-              >
-                <div className="text-[13px] truncate">{p.name}</div>
-                <div className="text-[11px] text-subtle truncate">{p.username || p.category || '—'}</div>
-              </button>
-            ))
-          )}
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-6">
-        {selected ? (
-          <PasswordDetail key={selected.id} id={selected.id} />
-        ) : loaded.passwords ? (
-          <EmptyState icon={<FiKey size={20} />} title="Select a password" hint="Pick an entry from the list, or create a new one." />
-        ) : null}
-      </div>
-    </div>
+        </>
+      )}
+      detail={(compact) => selected ? (
+        <PasswordDetail key={selected.id} entry={selected} compact={compact} onBack={() => selectSecret(null)} />
+      ) : null}
+      empty={loaded.passwords ? (
+        <EmptyState icon={<FiKey size={20} />} title="Select a password" hint="Pick an entry from the list, or create a new one. Passwords stay encrypted until you reveal them." />
+      ) : null}
+    />
   );
 }
 
-function PasswordDetail({ id }: { id: string }) {
-  const stored = useDataStore((s) => s.passwords.find((p) => p.id === id));
+function PasswordRow({ entry, selected, onSelect }: { entry: StoredPassword; selected: boolean; onSelect: () => void }) {
+  const host = entry.url ? entry.url.replace(/^https?:\/\//i, '').replace(/\/$/, '') : '';
+  return (
+    <button
+      id={`pw-row-${entry.id}`}
+      onClick={onSelect}
+      className={
+        'group w-full text-left rounded-lg border px-2.5 py-1.5 mb-0.5 transition-colors ' +
+        (selected ? 'bg-accent-dim border-accent-border' : 'border-transparent hover:bg-white/[0.04]')
+      }
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="text-[12.5px] font-medium truncate flex-1">{entry.name}</span>
+        {entry.category && (
+          <span className="text-[10px] text-subtle shrink-0 truncate max-w-[40%]">{entry.category}</span>
+        )}
+      </div>
+      <div className="text-[10.5px] text-subtle truncate mt-0.5">
+        {entry.username || host || '—'}
+      </div>
+    </button>
+  );
+}
+
+function PasswordDetail({ entry, compact, onBack }: {
+  entry: StoredPassword;
+  compact: boolean;
+  onBack: () => void;
+}) {
   const openForm = useUiStore((s) => s.openForm);
   const askConfirm = useUiStore((s) => s.askConfirm);
   const selectSecret = useUiStore((s) => s.selectSecret);
   const decryptPasswordById = useDataStore((s) => s.decryptPasswordById);
   const removePassword = useDataStore((s) => s.removePassword);
 
-  if (!stored) return <div className="text-muted text-sm">Entry not found.</div>;
-
   const doDelete = () => askConfirm({
     title: 'Delete password',
-    message: `Permanently delete "${stored.name}"? This cannot be undone.`,
+    message: `Permanently delete "${entry.name}"? This cannot be undone.`,
     confirmText: 'Delete',
     danger: true,
     onConfirm: () => {
-      void removePassword(stored.id)
+      void removePassword(entry.id)
         .then(() => { selectSecret(null); pushToast.success('Password deleted'); })
         .catch((e) => pushToast.fromError(e));
     },
   });
 
-  const urlHref = stored.url && !/^https?:\/\//i.test(stored.url) ? `https://${stored.url}` : stored.url;
+  const urlHref = entry.url && !/^https?:\/\//i.test(entry.url) ? `https://${entry.url}` : entry.url;
 
   return (
-    <div className="max-w-xl anim-fade-up">
-      <div className="flex items-start justify-between gap-4 mb-4">
-        <div className="min-w-0">
-          <h1 className="font-display text-[19px] font-bold tracking-tight truncate">{stored.name}</h1>
-          {stored.url && (
-            <button
-              className="text-[12px] text-accent-light hover:underline break-all text-left mt-1 inline-flex items-center gap-1"
-              onClick={() => openExternal(urlHref)}
-            >
-              {stored.url}
-            </button>
-          )}
-        </div>
-        <DetailActions onEdit={() => openForm('password', stored.id)} onDelete={doDelete} />
-      </div>
+    <>
+      <DetailHeader
+        title={entry.name}
+        onBack={compact ? onBack : undefined}
+        subtitle={entry.url ? (
+          <button
+            className="text-[12px] text-accent-light hover:underline break-all text-left inline-flex items-center gap-1"
+            onClick={() => openExternal(urlHref)}
+          >
+            {entry.url} <FiExternalLink size={11} className="shrink-0" />
+          </button>
+        ) : undefined}
+        actions={
+          <>
+            <button className="icon-btn" onClick={() => openForm('password', entry.id)} title="Edit" aria-label="Edit"><FiEdit2 size={15} /></button>
+            <button className="icon-btn icon-btn-danger" onClick={doDelete} title="Delete" aria-label="Delete"><FiTrash2 size={15} /></button>
+          </>
+        }
+      />
+      <DetailBody>
+        <section className="card p-4 mb-4">
+          <div className="mono-label mb-2">Password</div>
+          <RevealValue decrypt={() => decryptPasswordById(entry.id).then((d) => d.password)} />
+        </section>
 
-      <div className="card p-4 mb-4">
-        <div className="mono-label mb-2">Password</div>
-        <RevealValue decrypt={() => decryptPasswordById(id).then((d) => d.password)} />
-      </div>
+        <MetaGrid>
+          <MetaCell label="Username">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="font-mono text-[12px] truncate">{entry.username || <span className="text-subtle">—</span>}</span>
+              {entry.username && (
+                <CopyIconButton size={12} label="Copy username" onCopy={() => copyToSystemClipboard(entry.username, 'Username copied')} />
+              )}
+            </div>
+          </MetaCell>
+          <MetaCell label="Category">{entry.category || <span className="text-subtle">—</span>}</MetaCell>
+          <MetaCell label="Updated">{formatDate(entry.updatedAt)}</MetaCell>
+        </MetaGrid>
 
-      <DetailRow label="Username">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[12px] truncate">{stored.username || '—'}</span>
-          {stored.username && (
-            <button className="btn-ghost !px-2 !py-0.5 !text-[11px]" onClick={() => void copyToSystemClipboard(stored.username, 'Username copied')}>
-              copy
-            </button>
-          )}
-        </div>
-      </DetailRow>
-      <DetailRow label="Notes">
-        <RevealValue decrypt={() => decryptPasswordById(id).then((d) => d.notes)} multiline />
-      </DetailRow>
-      <DetailRow label="Category">{stored.category || '—'}</DetailRow>
-      <DetailRow label="Updated">{formatDate(stored.updatedAt)}</DetailRow>
-    </div>
+        <section className="card p-4 mt-4">
+          <div className="mono-label mb-2">Notes</div>
+          {entry.encNotes
+            ? <RevealValue decrypt={() => decryptPasswordById(entry.id).then((d) => d.notes)} multiline />
+            : <div className="text-[12.5px] text-subtle">No notes</div>}
+        </section>
+      </DetailBody>
+    </>
   );
 }

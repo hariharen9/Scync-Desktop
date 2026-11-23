@@ -90,14 +90,14 @@ export default function Shell({ user, onSignOut }: { user: User; onSignOut: () =
     <div className="h-full flex">
       {/* ─── Sidebar ─── */}
       <aside className="w-[216px] shrink-0 border-r border-border bg-panel flex flex-col">
-        <div className="px-4 pt-4 pb-3 flex items-center gap-2.5">
-          <BrandMark size={26} glow />
-          <div className="leading-none min-w-0">
+        <div className="px-4 pt-4 pb-3">
+          <div className="flex items-center gap-2.5">
+            <BrandMark size={22} glow />
             <Wordmark small />
-            <div className="mono-label mt-1 flex items-center gap-1.5">
-              <span className={`w-1.5 h-1.5 rounded-full ${lockPhase === 'unlocked' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-              {lockPhase}
-            </div>
+          </div>
+          <div className="mono-label mt-1 flex items-center gap-1.5 pl-[32px]">
+            <span className={`w-1.5 h-1.5 rounded-full ${lockPhase === 'unlocked' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            {lockPhase}
           </div>
         </div>
 

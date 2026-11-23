@@ -76,6 +76,11 @@ body,
   -webkit-font-smoothing: antialiased;
 }
 
+/* The quick window is transparent so only .quick-card paints; without this
+   the opaque html/#root background shows as a second card behind it. */
+html[data-window='quick'],
+html[data-window='quick'] body,
+html[data-window='quick'] #root,
 body[data-window='quick'] {
   background-color: transparent;
 }
@@ -110,6 +115,14 @@ select {
 }
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* Opt-out for horizontally scrolling strips (filter chips) */
+.hide-scrollbar {
+  scrollbar-width: none;
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 /* ─── Motion ─── */
@@ -441,20 +454,20 @@ select {
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.62);
 }
 
-/* Quick-popup shell (transparent window) */
+/* Quick-popup shell (transparent window). The card is the only opaque
+   surface — the html/body/#root layers stay transparent so there is no
+   second "card" peeking out behind it. */
 .quick-shell {
   height: 100%;
-  padding: 10px;
+  padding: 0;
 }
 .quick-card {
   height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-radius: 14px;
-  border: 1px solid var(--color-border-strong);
   background: linear-gradient(180deg, #0c0e12 0%, #08090c 100%);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.66), 0 0 0 1px rgba(16, 185, 129, 0.06);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.66);
 }
 
 /* TOTP countdown ring */

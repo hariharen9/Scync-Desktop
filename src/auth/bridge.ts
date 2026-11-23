@@ -6,7 +6,7 @@
  * crashing, so the UI can show a diagnostics message.
  */
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
-import { listen as tauriListen, emit as tauriEmit } from '@tauri-apps/api/event';
+import { listen as tauriListen, emit as tauriEmit, emitTo as tauriEmitTo } from '@tauri-apps/api/event';
 
 export const isTauri = '__TAURI_INTERNALS__' in (typeof window !== 'undefined' ? window : {});
 
@@ -27,6 +27,16 @@ export function listen<T>(event: string, handler: (payload: T) => void): Promise
 export function emit(event: string, payload?: unknown): Promise<void> {
   if (!isTauri) return Promise.resolve();
   return tauriEmit(event, payload);
+}
+
+/**
+ * Emit to a single window only. Used to hand the master password from the
+ * quick popup straight to the main window, so it is never broadcast to every
+ * webview.
+ */
+export function emitTo(target: string, event: string, payload?: unknown): Promise<void> {
+  if (!isTauri) return Promise.resolve();
+  return tauriEmitTo(target, event, payload);
 }
 
 // Command wrappers ──────────────────────────────────────────────────────────

@@ -13,9 +13,9 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  FiAlertTriangle, FiCheck, FiCornerDownLeft, FiLock, FiSearch, FiX,
+  FiAlertTriangle, FiCheck, FiCornerDownLeft, FiEye, FiEyeOff, FiLock, FiSearch, FiX,
 } from 'react-icons/fi';
-import { listen, bridge, emit } from '@/auth/bridge.js';
+import { listen, bridge, emit, emitTo } from '@/auth/bridge.js';
 import { secondaryLabel } from '@/lib/search.js';
 import { useNowInterval } from '@/ui/components/Toast.js';
 import { BrandMark, Kbd, MOD_KEY } from '@/ui/components/primitives.js';
@@ -33,6 +33,7 @@ interface QuickSearchItem {
 
 interface ResultsPayload { items: QuickSearchItem[]; locked: boolean; ready: boolean }
 interface CopyResultPayload { ok: boolean; message: string; clearSecs?: number }
+interface UnlockResultPayload { ok: boolean; message?: string }
 
 const KIND_META: Record<QuickSearchItem['kind'], { label: string; tone: string; dot: string }> = {
   secret: { label: 'Secret', tone: 'text-emerald-300', dot: 'bg-emerald-400' },
@@ -57,6 +58,13 @@ export default function QuickApp({ initialResults }: { initialResults?: ResultsP
   const [copied, setCopied] = useState<{ key: string; message: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [clearAt, setClearAt] = useState(0);
+  // Unlock-in-popup state. The password is forwarded to the main window and
+  // cleared immediately — this window never derives or holds a vault key.
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [unlocking, setUnlocking] = useState(false);
+  const [unlockError, setUnlockError] = useState<string | null>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   // Which item key a copy is in flight for (read inside the event handler).
@@ -83,6 +91,21 @@ export default function QuickApp({ initialResults }: { initialResults?: ResultsP
           setError(p.message);
         }
       }),
+      listen<UnlockResultPayload>('quick:unlock-result', (p) => {
+        setUnlocking(false);
+        if (p.ok) {
+          setUnlockError(null);
+          setPassword('');
+          // The main window flips the vault to unlocked and answers the
+          // subsequent query with results; reset to the searching state.
+          setResults((r) => ({ ...r, locked: false, ready: false }));
+          void emit('quick:query', { q: '' });
+        } else {
+          setUnlockError(p.message ?? 'Incorrect master password.');
+          setPassword('');
+          passwordRef.current?.focus();
+        }
+      }),
       listen<null>('vault:locked', () => setResults((r) => ({ ...r, locked: true, items: [] }))),
     ];
     return () => {
@@ -102,6 +125,11 @@ export default function QuickApp({ initialResults }: { initialResults?: ResultsP
       setPending(null);
       setError(null);
       setClearAt(0);
+      setPassword('');
+      setUnlockError(null);
+      setUnlocking(false);
+      // If the vault is locked, put the cursor straight in the password box.
+      setTimeout(() => passwordRef.current?.focus(), 30);
     });
     return () => void stop.then((f) => f());
   }, []);
@@ -152,6 +180,9 @@ export default function QuickApp({ initialResults }: { initialResults?: ResultsP
     if (e.key === 'Escape') {
       e.preventDefault();
       void bridge.hideQuickWindow();
+    } else if (results.locked) {
+      // Locked: keys belong to the password field, not the list.
+      return;
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       setCursor((c) => Math.min(c + 1, Math.max(0, flat.length - 1)));
@@ -168,6 +199,15 @@ export default function QuickApp({ initialResults }: { initialResults?: ResultsP
   useEffect(() => {
     listRef.current?.querySelector('[data-selected="true"]')?.scrollIntoView({ block: 'nearest' });
   }, [cursor]);
+
+  const submitUnlock = () => {
+    if (!password || unlocking) return;
+    setUnlockError(null);
+    setUnlocking(true);
+    // Hand the password to the main window (which owns the key) and drop it
+    // from this window immediately — it is never held here.
+    void emitTo('main', 'quick:unlock', { password }).finally(() => setPassword(''));
+  };
 
   const countdown = clearAt > 0 ? Math.max(0, Math.ceil((clearAt - nowMs) / 1000)) : 0;
 
@@ -210,49 +250,109 @@ export default function QuickApp({ initialResults }: { initialResults?: ResultsP
   return (
     <div className="quick-shell text-[13px]" onKeyDown={onKeyDown}>
       <div className="quick-card">
-        {/* Search row */}
-        <div className="flex items-center gap-2.5 px-4 pt-3 pb-2.5 border-b border-border">
-          <BrandMark size={16} />
-          <FiSearch size={13} className="text-subtle shrink-0" />
-          <input
-            ref={inputRef}
-            className="flex-1 bg-transparent outline-none placeholder:text-subtle text-[14px] min-w-0"
-            placeholder={results.locked ? 'Vault is locked' : 'Search secrets, passwords, keys…'}
-            value={query}
-            disabled={results.locked}
-            onChange={(e) => { setQuery(e.target.value); setCursor(0); }}
-            spellCheck={false}
-            autoComplete="off"
-            autoFocus
-          />
-          {query ? (
-            <button
-              className="text-subtle hover:text-text transition-colors shrink-0"
-              onClick={() => { setQuery(''); setCursor(0); inputRef.current?.focus(); }}
-              aria-label="Clear"
-            >
-              <FiX size={13} />
-            </button>
-          ) : (
-            !results.locked && <Kbd>Esc</Kbd>
-          )}
-        </div>
+        {/* Header: search when unlocked, a compact title bar when locked so the
+            password field is the only input on screen. */}
+        {results.locked ? (
+          <div className="flex items-center gap-2.5 px-4 pt-3 pb-2.5 border-b border-border">
+            <BrandMark size={16} />
+            <span className="flex-1 text-[12px] text-muted">Scync is locked</span>
+            <Kbd>Esc</Kbd>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2.5 px-4 pt-3 pb-2.5 border-b border-border">
+            <BrandMark size={16} />
+            <FiSearch size={13} className="text-subtle shrink-0" />
+            <input
+              ref={inputRef}
+              className="flex-1 bg-transparent outline-none placeholder:text-subtle text-[14px] min-w-0"
+              placeholder="Search secrets, passwords, keys…"
+              value={query}
+              onChange={(e) => { setQuery(e.target.value); setCursor(0); }}
+              spellCheck={false}
+              autoComplete="off"
+              autoFocus
+            />
+            {query ? (
+              <button
+                className="text-subtle hover:text-text transition-colors shrink-0"
+                onClick={() => { setQuery(''); setCursor(0); inputRef.current?.focus(); }}
+                aria-label="Clear"
+              >
+                <FiX size={13} />
+              </button>
+            ) : (
+              <Kbd>Esc</Kbd>
+            )}
+          </div>
+        )}
 
         {results.locked ? (
-          <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-8">
-            <div className="grid place-items-center w-11 h-11 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 mb-3">
-              <FiLock size={18} />
+          <div className="flex-1 flex flex-col justify-center px-6 py-5">
+            <div className="flex items-center gap-2.5 mb-3">
+              <div className="grid place-items-center w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 shrink-0">
+                <FiLock size={16} />
+              </div>
+              <div className="min-w-0">
+                <div className="text-[13px] font-semibold leading-tight">Unlock to search</div>
+                <div className="text-[11px] text-muted leading-tight mt-0.5">
+                  Same master password — it stays on this device.
+                </div>
+              </div>
             </div>
-            <div className="text-[13px] font-semibold">Vault is locked</div>
-            <p className="text-[11.5px] text-muted mt-1 mb-4 max-w-[260px] leading-relaxed">
-              Unlock in the main window to search and copy secrets from here.
+
+            <div className="relative">
+              <input
+                ref={passwordRef}
+                type={showPassword ? 'text' : 'password'}
+                className={'field pr-[70px] ' + (unlockError ? 'field-error' : '')}
+                placeholder="Master password"
+                value={password}
+                autoComplete="current-password"
+                spellCheck={false}
+                disabled={unlocking}
+                onChange={(e) => { setPassword(e.target.value); if (unlockError) setUnlockError(null); }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); submitUnlock(); }
+                }}
+              />
+              <button
+                type="button"
+                tabIndex={-1}
+                className="absolute right-2 top-1/2 -translate-y-1/2 icon-btn !w-7 !h-7"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <FiEyeOff size={13} /> : <FiEye size={13} />}
+              </button>
+            </div>
+
+            {unlockError && (
+              <div className="flex items-start gap-1.5 text-[11px] text-rose-400 mt-2" role="alert">
+                <FiAlertTriangle size={11} className="mt-0.5 shrink-0" />
+                <span>{unlockError}</span>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 mt-3">
+              <button
+                className="btn-primary flex-1 !text-[12px] !py-2"
+                onClick={submitUnlock}
+                disabled={unlocking || !password}
+              >
+                {unlocking ? <><span className="spinner" /> Deriving key…</> : <>Unlock <FiCornerDownLeft size={12} /></>}
+              </button>
+              <button
+                className="btn-ghost !text-[12px] !py-2"
+                onClick={() => { void bridge.showMainWindow(); void bridge.hideQuickWindow(); }}
+                title="Open the main window instead"
+              >
+                Open app
+              </button>
+            </div>
+
+            <p className="mono-label text-center mt-3">
+              PBKDF2-SHA256 · 310,000 iterations · key never leaves the main window
             </p>
-            <button
-              className="btn-primary !text-[12px]"
-              onClick={() => { void bridge.showMainWindow(); void bridge.hideQuickWindow(); }}
-            >
-              Open Scync to unlock
-            </button>
           </div>
         ) : (
           <>

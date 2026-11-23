@@ -161,6 +161,32 @@ export default function App() {
       listen<{ q: string }>('quick:query', ({ q }) => answer(q)),
       // The popup cleared its state on show; don't make it wait for a keystroke.
       listen<null>('quick:shown', () => answer('')),
+      // Unlock from the popup. The password is handed ONLY to this window,
+      // which does the PBKDF2 derivation and keeps the key — it never reaches
+      // the popup, and the popup never holds or derives a key.
+      listen<{ password: string }>('quick:unlock', ({ password }) => {
+        void (async () => {
+          const store = useVaultStore.getState();
+          // Rate-limited? Report how long to wait without deriving.
+          const waitMs = store.nextAttemptAllowedAt - Date.now();
+          if (waitMs > 0) {
+            await emit('quick:unlock-result', {
+              ok: false,
+              message: `Too many attempts. Wait ${Math.ceil(waitMs / 1000)}s.`,
+            });
+            return;
+          }
+          // A failed attempt locks the vault; the popup asks for the password
+          // again, so close ourselves rather than trying to show it here.
+          const ok = await useVaultStore.getState().unlock(password);
+          if (ok) {
+            await emit('quick:unlock-result', { ok: true });
+          } else {
+            const err = useVaultStore.getState().error ?? 'Incorrect master password.';
+            await emit('quick:unlock-result', { ok: false, message: err });
+          }
+        })();
+      }),
       listen<{ id: string; kind: string; field: string }>('quick:copy', ({ id, kind, field }) => {
         void (async () => {
           try {

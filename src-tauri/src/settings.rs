@@ -30,6 +30,12 @@ pub struct Settings {
     pub clipboard_clear_secs: u64,
     /// Window content protection (screenshot/recording shield), best-effort.
     pub content_protection: bool,
+    /// Unlock with Windows Hello / PIN enabled (opt-in).
+    pub hello_enabled: bool,
+    /// Require the master password every N days even when Windows Hello is enabled (None = never).
+    pub require_password_every_days: Option<u64>,
+    /// Epoch ms of the most recent master-password unlock (drives periodic check).
+    pub last_password_unlock_at: Option<u64>,
 }
 
 impl Default for Settings {
@@ -40,6 +46,9 @@ impl Default for Settings {
             hidden_lock_minutes: Some(5),
             clipboard_clear_secs: 20,
             content_protection: true,
+            hello_enabled: false,
+            require_password_every_days: Some(14),
+            last_password_unlock_at: None,
         }
     }
 }

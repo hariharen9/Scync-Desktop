@@ -13,7 +13,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  FiAlertTriangle, FiCheck, FiCornerDownLeft, FiEye, FiEyeOff, FiLock, FiSearch, FiX,
+  FiAlertTriangle, FiCheck, FiCornerDownLeft, FiEye, FiEyeOff, FiLock, FiSearch, FiShield, FiX,
 } from 'react-icons/fi';
 import { listen, bridge, emit, emitTo } from '@/auth/bridge.js';
 import { secondaryLabel } from '@/lib/search.js';
@@ -31,9 +31,15 @@ interface QuickSearchItem {
   updatedAt?: number;
 }
 
-interface ResultsPayload { items: QuickSearchItem[]; locked: boolean; ready: boolean }
+interface ResultsPayload {
+  items: QuickSearchItem[];
+  locked: boolean;
+  ready: boolean;
+  helloAvailable?: boolean;
+  passwordRequired?: boolean;
+}
 interface CopyResultPayload { ok: boolean; message: string; clearSecs?: number }
-interface UnlockResultPayload { ok: boolean; message?: string }
+interface UnlockResultPayload { ok: boolean; cancelled?: boolean; message?: string }
 
 const KIND_META: Record<QuickSearchItem['kind'], { label: string; tone: string; dot: string }> = {
   secret: { label: 'Secret', tone: 'text-emerald-300', dot: 'bg-emerald-400' },
@@ -64,6 +70,7 @@ export default function QuickApp({ initialResults }: { initialResults?: ResultsP
   const [showPassword, setShowPassword] = useState(false);
   const [unlocking, setUnlocking] = useState(false);
   const [unlockError, setUnlockError] = useState<string | null>(null);
+  const helloAutoPromptedRef = useRef(false);
   const passwordRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -100,6 +107,9 @@ export default function QuickApp({ initialResults }: { initialResults?: ResultsP
           // subsequent query with results; reset to the searching state.
           setResults((r) => ({ ...r, locked: false, ready: false }));
           void emit('quick:query', { q: '' });
+        } else if (p.cancelled) {
+          setUnlockError(null);
+          passwordRef.current?.focus();
         } else {
           setUnlockError(p.message ?? 'Incorrect master password.');
           setPassword('');
@@ -128,11 +138,22 @@ export default function QuickApp({ initialResults }: { initialResults?: ResultsP
       setPassword('');
       setUnlockError(null);
       setUnlocking(false);
+      helloAutoPromptedRef.current = false;
       // If the vault is locked, put the cursor straight in the password box.
       setTimeout(() => passwordRef.current?.focus(), 30);
     });
     return () => void stop.then((f) => f());
   }, []);
+
+  // Auto-prompt Windows Hello / PIN when the popup opens locked and Hello is available.
+  useEffect(() => {
+    if (!results.locked || !results.helloAvailable || results.passwordRequired) return;
+    if (unlocking || helloAutoPromptedRef.current) return;
+    helloAutoPromptedRef.current = true;
+    setUnlockError(null);
+    setUnlocking(true);
+    void emitTo('main', 'quick:unlock-hello');
+  }, [results.locked, results.helloAvailable, results.passwordRequired, unlocking]);
 
   // Debounced query → main window.
   useEffect(() => {
@@ -341,6 +362,21 @@ export default function QuickApp({ initialResults }: { initialResults?: ResultsP
               >
                 {unlocking ? <><span className="spinner" /> Deriving key…</> : <>Unlock <FiCornerDownLeft size={12} /></>}
               </button>
+              {results.helloAvailable && !results.passwordRequired && (
+                <button
+                  type="button"
+                  className="btn-ghost !text-[12px] !py-2"
+                  disabled={unlocking}
+                  onClick={() => {
+                    setUnlockError(null);
+                    setUnlocking(true);
+                    void emitTo('main', 'quick:unlock-hello');
+                  }}
+                  title="Unlock with Windows Hello / PIN"
+                >
+                  <FiShield size={12} className="text-accent-light" /> Hello
+                </button>
+              )}
               <button
                 className="btn-ghost !text-[12px] !py-2"
                 onClick={() => { void bridge.showMainWindow(); void bridge.hideQuickWindow(); }}

@@ -78,6 +78,24 @@ export const bridge = {
   openExternal(url: string): Promise<void> {
     return invoke('open_external', { url });
   },
+  isBiometricAvailable(): Promise<boolean> {
+    if (!isTauri) return Promise.resolve(false);
+    return invoke<boolean>('is_biometric_available');
+  },
+  hasBiometricEnrolled(uid: string): Promise<boolean> {
+    if (!isTauri) return Promise.resolve(false);
+    return invoke<boolean>('has_biometric_enrolled', { uid });
+  },
+  enrollBiometric(uid: string, password: string): Promise<void> {
+    return invoke('enroll_biometric', { uid, password });
+  },
+  unlockWithBiometric(uid: string): Promise<string> {
+    return invoke<string>('unlock_with_biometric', { uid });
+  },
+  clearBiometric(uid: string): Promise<void> {
+    if (!isTauri) return Promise.resolve();
+    return invoke('clear_biometric', { uid });
+  },
 };
 
 /**
@@ -100,4 +118,7 @@ export interface SettingsFile {
   hiddenLockMinutes: number | null;
   clipboardClearSecs: number;
   contentProtection: boolean;
+  helloEnabled: boolean;
+  requirePasswordEveryDays: number | null;
+  lastPasswordUnlockAt: number | null;
 }

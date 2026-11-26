@@ -28,6 +28,15 @@ version = "0.12"
 default-features = false
 features = ["json", "rustls-tls", "http2", "blocking"]
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Security_Credentials_UI",
+    "Foundation",
+    "Win32_Security_Cryptography",
+    "Win32_Foundation",
+    "Win32_System_Memory",
+] }
+
 [dev-dependencies]
 
 [features]

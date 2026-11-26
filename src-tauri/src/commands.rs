@@ -1,5 +1,6 @@
 //! Tauri commands exposed to the webviews, plus shared internals.
 
+use crate::biometric;
 use crate::oauth;
 use crate::settings::{self, Settings};
 use sha2::{Digest, Sha256};
@@ -261,4 +262,37 @@ pub fn ensure_main_window(app: &AppHandle) {
             .min_inner_size(960.0, 640.0)
             .build();
     }
+}
+
+// ─── Windows Hello / Biometric unlock ───
+
+#[tauri::command]
+pub async fn is_biometric_available() -> bool {
+    tauri::async_runtime::spawn_blocking(biometric::is_available)
+        .await
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+pub fn has_biometric_enrolled(app: AppHandle, uid: String) -> bool {
+    biometric::has_enrolled_key(&app, &uid)
+}
+
+#[tauri::command]
+pub async fn enroll_biometric(app: AppHandle, uid: String, password: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || biometric::enroll(&app, &uid, &password))
+        .await
+        .map_err(|e| format!("Windows Hello task failed: {e}"))?
+}
+
+#[tauri::command]
+pub async fn unlock_with_biometric(app: AppHandle, uid: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || biometric::unlock(&app, &uid))
+        .await
+        .map_err(|e| format!("Windows Hello task failed: {e}"))?
+}
+
+#[tauri::command]
+pub fn clear_biometric(app: AppHandle, uid: String) -> Result<(), String> {
+    biometric::clear_enrolled_key(&app, &uid)
 }

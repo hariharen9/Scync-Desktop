@@ -10,6 +10,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FiAlertTriangle, FiArrowRight, FiCheck, FiEye, FiEyeOff, FiKey, FiLogOut, FiLock, FiShield } from 'react-icons/fi';
 import { useVaultStore, retryDelayMs, MAX_ATTEMPTS_BEFORE_DELAY } from '@/stores/vaultStore.js';
+import { useUiStore } from '@/stores/uiStore.js';
+import { bridge, isTauri } from '@/auth/bridge.js';
+import { isPasswordRequiredNow } from '@/lib/settings.js';
 import { BrandMark, Wordmark, Avatar } from '@/ui/components/primitives.js';
 
 const OUTER = 12;
@@ -59,9 +62,40 @@ export default function UnlockScreen({
   const nextAttemptAllowedAt = useVaultStore((s) => s.nextAttemptAllowedAt);
   const error = useVaultStore((s) => s.error);
   const lockReason = useVaultStore((s) => s.lockReason);
+  const uid = useVaultStore((s) => s.uid);
   const unlock = useVaultStore((s) => s.unlock);
+  const unlockWithBiometric = useVaultStore((s) => s.unlockWithBiometric);
   const justSucceeded = useVaultStore((s) => s.lockPhase === 'unlocked');
+  const settings = useUiStore((s) => s.settings);
+  const settingsLoaded = useUiStore((s) => s.settingsLoaded);
+  const [helloReady, setHelloReady] = useState(false);
+  const autoPromptedRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const passwordRequired = isPasswordRequiredNow(settings);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!isTauri || !settingsLoaded || !settings.helloEnabled || !uid) {
+      setHelloReady(false);
+      return;
+    }
+    void Promise.all([
+      bridge.isBiometricAvailable().catch(() => false),
+      bridge.hasBiometricEnrolled(uid).catch(() => false),
+    ]).then(([avail, enrolled]) => {
+      if (!cancelled) setHelloReady(avail && enrolled);
+    });
+    return () => { cancelled = true; };
+  }, [settingsLoaded, settings.helloEnabled, uid]);
+
+  // Auto-prompt Windows Hello once per lock cycle when enabled and within the password-free window.
+  useEffect(() => {
+    if (!helloReady || passwordRequired || unlocking || justSucceeded || autoPromptedRef.current) return;
+    if (Date.now() < nextAttemptAllowedAt) return;
+    autoPromptedRef.current = true;
+    void unlockWithBiometric();
+  }, [helloReady, passwordRequired, unlocking, justSucceeded, nextAttemptAllowedAt, unlockWithBiometric]);
 
   useEffect(() => {
     const t = setInterval(() => setNowMs(Date.now()), 250);
@@ -127,6 +161,16 @@ export default function UnlockScreen({
                 <div className="mt-3 flex items-center gap-2 text-[11.5px] text-amber-300/90">
                   <FiLock size={11} className="shrink-0" />
                   <span>Locked automatically · {lockReason}</span>
+                </div>
+              )}
+
+              {settings.helloEnabled && helloReady && passwordRequired && !justSucceeded && (
+                <div className="mt-3 flex items-center gap-2 text-[11.5px] text-amber-300/90">
+                  <FiShield size={11} className="shrink-0" />
+                  <span>
+                    Periodic check · master password required
+                    {settings.requirePasswordEveryDays ? ` (every ${settings.requirePasswordEveryDays}d)` : ''}
+                  </span>
                 </div>
               )}
 
@@ -209,6 +253,18 @@ export default function UnlockScreen({
                   <>Unlock <FiArrowRight size={14} /></>
                 )}
               </button>
+
+              {helloReady && !passwordRequired && !justSucceeded && (
+                <button
+                  type="button"
+                  className="btn-ghost w-full mt-2.5 !text-[12.5px]"
+                  disabled={unlocking || rateLimited}
+                  onClick={() => void unlockWithBiometric()}
+                >
+                  <FiShield size={14} className="text-accent-light" />
+                  Unlock with Windows Hello / PIN
+                </button>
+              )}
 
               <div className="mt-4 h-0.5 rounded-full bg-white/[0.06] overflow-hidden">
                 <div

@@ -8,6 +8,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod biometric;
 mod commands;
 mod oauth;
 mod settings;
@@ -59,6 +60,11 @@ fn main() {
             commands::get_hotkey,
             commands::quit_app,
             commands::open_external,
+            commands::is_biometric_available,
+            commands::has_biometric_enrolled,
+            commands::enroll_biometric,
+            commands::unlock_with_biometric,
+            commands::clear_biometric,
         ])
         .setup(|app| {
             let settings = settings::load(app.handle());

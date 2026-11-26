@@ -13,6 +13,8 @@ import {
   checkVerifier,
   type VaultMeta,
 } from '@/backend/index.js';
+import { bridge } from '@/auth/bridge.js';
+import { useUiStore } from './uiStore.js';
 
 export type LockPhase = 'locked' | 'unlocking' | 'unlocked';
 
@@ -41,7 +43,8 @@ interface VaultState {
 
   setUid: (uid: string | null) => void;
   loadVaultMeta: (uid: string) => Promise<boolean>;
-  unlock: (password: string) => Promise<boolean>;
+  unlock: (password: string, opts?: { viaBiometric?: boolean }) => Promise<boolean>;
+  unlockWithBiometric: () => Promise<boolean>;
   lock: (opts?: { silent?: boolean; reason?: string }) => void;
   clearSession: () => void;
   isVaultReady: () => boolean;
@@ -74,7 +77,7 @@ export const useVaultStore = create<VaultState>((set, get) => ({
    * Unlock = getVaultMeta → deriveKey(password, uid, salt) → checkVerifier.
    * PBKDF2 runs in the webview's WebCrypto (async, off the UI thread).
    */
-  unlock: async (password) => {
+  unlock: async (password, opts) => {
     const state = get();
     if (!state.uid) {
       set({ error: 'No signed-in user.' });
@@ -123,6 +126,9 @@ export const useVaultStore = create<VaultState>((set, get) => ({
         error: null,
         lockReason: null,
       });
+      if (!opts?.viaBiometric) {
+        useUiStore.getState().patchSettings({ lastPasswordUnlockAt: Date.now() });
+      }
       return true;
     } catch (e) {
       set({
@@ -131,6 +137,49 @@ export const useVaultStore = create<VaultState>((set, get) => ({
       });
       return false;
     }
+  },
+
+  /**
+   * Unlock using Windows Hello / PIN: Rust verifies user consent and unseals
+   * the DPAPI-protected master password, then we run the normal deriveKey +
+   * checkVerifier flow. Cancelling Windows Hello does not count as a failed attempt.
+   */
+  unlockWithBiometric: async () => {
+    const state = get();
+    if (!state.uid) {
+      set({ error: 'No signed-in user.' });
+      return false;
+    }
+    if (Date.now() < state.nextAttemptAllowedAt) {
+      const wait = Math.ceil((state.nextAttemptAllowedAt - Date.now()) / 1000);
+      set({ error: `Too many attempts. Wait ${wait}s and try again.` });
+      return false;
+    }
+
+    set({ lockPhase: 'unlocking', error: null });
+    let password: string;
+    try {
+      password = await bridge.unlockWithBiometric(state.uid);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg === 'BIOMETRIC_CANCELLED') {
+        set({ lockPhase: 'locked', error: null });
+      } else {
+        set({ lockPhase: 'locked', error: msg });
+      }
+      return false;
+    }
+
+    const ok = await get().unlock(password, { viaBiometric: true });
+    if (!ok && get().error === 'Incorrect master password.') {
+      // Master password was changed on the web app; wipe stale sealed key.
+      void bridge.clearBiometric(state.uid).catch(() => undefined);
+      useUiStore.getState().patchSettings({ helloEnabled: false });
+      set({
+        error: 'Your master password appears to have changed. Please unlock with your new password.',
+      });
+    }
+    return ok;
   },
 
   /**

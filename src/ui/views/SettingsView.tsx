@@ -13,7 +13,9 @@ import {
   FiGithub, FiGlobe, FiInfo, FiLock, FiLogOut, FiMinus, FiPlus, FiPower, FiRotateCcw, FiShield,
 } from 'react-icons/fi';
 import { useUiStore } from '@/stores/uiStore.js';
+import { useVaultStore } from '@/stores/vaultStore.js';
 import { bridge, isTauri, openExternal } from '@/auth/bridge.js';
+import { checkVerifier, deriveKey } from '@/backend/index.js';
 import { BrandMark, Kbd, MOD_KEY } from '@/ui/components/primitives.js';
 import { pushToast } from '@/ui/components/Toast.js';
 import { lockNow } from '@/lib/autoLock.js';
@@ -131,6 +133,13 @@ const CLIP_PRESETS = [
   { label: '30s', value: 30 },
   { label: '60s', value: 60 },
 ];
+const PASSWORD_DAY_PRESETS = [
+  { label: 'Never', value: 0 },
+  { label: '7d', value: 7 },
+  { label: '14d', value: 14 },
+  { label: '30d', value: 30 },
+  { label: '90d', value: 90 },
+];
 
 // ─── Layout bits ────────────────────────────────────────────────────────────
 
@@ -216,13 +225,20 @@ export default function SettingsView() {
   const patchSettings = useUiStore((s) => s.patchSettings);
   const askConfirm = useUiStore((s) => s.askConfirm);
   const [autostart, setAutostart] = useState(false);
+  const [helloAvailable, setHelloAvailable] = useState(false);
+  const [enrollingHello, setEnrollingHello] = useState(false);
+  const [enrollPassword, setEnrollPassword] = useState('');
+  const [enrollBusy, setEnrollBusy] = useState(false);
+  const [enrollError, setEnrollError] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
   const [hotkeyError, setHotkeyError] = useState<string | null>(null);
   const [active, setActive] = useState<SectionId>('search');
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (isTauri) void bridge.isAutostartEnabled().then(setAutostart).catch(() => undefined);
+    if (!isTauri) return;
+    void bridge.isAutostartEnabled().then(setAutostart).catch(() => undefined);
+    void bridge.isBiometricAvailable().then(setHelloAvailable).catch(() => undefined);
   }, []);
 
   // Scroll-spy: highlight the rail item for the section nearest the top.
@@ -321,6 +337,48 @@ export default function SettingsView() {
 
   const idle = settings.idleLockMinutes ?? 0;
   const hidden = settings.hiddenLockMinutes ?? 0;
+  const passwordEveryDays = settings.requirePasswordEveryDays ?? 0;
+
+  const confirmHelloEnrollment = async () => {
+    const { uid, vaultMeta } = useVaultStore.getState();
+    if (!uid || !vaultMeta || !enrollPassword || enrollBusy) return;
+    setEnrollBusy(true);
+    setEnrollError(null);
+    try {
+      const key = await deriveKey(enrollPassword, uid, vaultMeta.salt);
+      const ok = await checkVerifier(key, vaultMeta.verifier);
+      if (!ok) {
+        setEnrollError('Incorrect master password.');
+        return;
+      }
+      await bridge.enrollBiometric(uid, enrollPassword);
+      patchSettings({ helloEnabled: true, lastPasswordUnlockAt: Date.now() });
+      setEnrollingHello(false);
+      setEnrollPassword('');
+      pushToast.success('Windows Hello enabled', 'You can now unlock with Windows Hello or PIN');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setEnrollError(msg === 'BIOMETRIC_CANCELLED' ? 'Windows Hello verification was cancelled.' : msg);
+    } finally {
+      setEnrollBusy(false);
+    }
+  };
+
+  const toggleHello = (enable: boolean) => {
+    const uid = useVaultStore.getState().uid;
+    if (!enable) {
+      patchSettings({ helloEnabled: false });
+      if (uid) void bridge.clearBiometric(uid).catch(() => undefined);
+      setEnrollingHello(false);
+      setEnrollPassword('');
+      setEnrollError(null);
+      pushToast.success('Windows Hello disabled', 'Sealed key removed from this device');
+      return;
+    }
+    setEnrollError(null);
+    setEnrollPassword('');
+    setEnrollingHello(true);
+  };
 
   return (
     <div ref={scrollRef} className="h-full overflow-y-auto">
@@ -420,6 +478,90 @@ export default function SettingsView() {
                   )}
                 </div>
               </Row>
+              <Row
+                stacked
+                label="Windows Hello / PIN"
+                hint={
+                  !isTauri
+                    ? 'Only available inside the desktop shell.'
+                    : !helloAvailable
+                      ? 'Windows Hello or PIN is not configured on this device.'
+                      : 'Unlock the vault with Windows Hello (Face, Fingerprint, or PIN) instead of typing your master password every time.'
+                }
+              >
+                <div className="flex items-center gap-2.5">
+                  <span className={'mono-label ' + (settings.helloEnabled ? 'text-accent-light' : '')}>
+                    {settings.helloEnabled ? 'On' : 'Off'}
+                  </span>
+                  <Toggle
+                    on={settings.helloEnabled}
+                    disabled={!isTauri || (!helloAvailable && !settings.helloEnabled)}
+                    onChange={toggleHello}
+                  />
+                </div>
+              </Row>
+              {enrollingHello && (
+                <div className="py-3.5 border-b border-border">
+                  <div className="text-[12px] font-medium mb-1">Confirm your master password</div>
+                  <p className="text-[11px] text-muted mb-2.5">
+                    Your password is sealed locally with Windows DPAPI and gated by Windows Hello. It never leaves this device.
+                  </p>
+                  <form
+                    className="flex flex-wrap items-center gap-2"
+                    onSubmit={(e) => { e.preventDefault(); void confirmHelloEnrollment(); }}
+                  >
+                    <input
+                      type="password"
+                      autoFocus
+                      className={'field flex-1 min-w-[200px] ' + (enrollError ? 'field-error' : '')}
+                      placeholder="Master password"
+                      value={enrollPassword}
+                      disabled={enrollBusy}
+                      onChange={(e) => { setEnrollPassword(e.target.value); if (enrollError) setEnrollError(null); }}
+                    />
+                    <button type="submit" className="btn-primary !py-2 !px-3.5 !text-[12px]" disabled={enrollBusy || !enrollPassword}>
+                      {enrollBusy ? <><span className="spinner" /> Verifying…</> : 'Enable'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost !py-2 !px-3 !text-[12px]"
+                      disabled={enrollBusy}
+                      onClick={() => { setEnrollingHello(false); setEnrollPassword(''); setEnrollError(null); }}
+                    >
+                      Cancel
+                    </button>
+                  </form>
+                  {enrollError && (
+                    <div className="flex items-center gap-1.5 text-[11.5px] text-rose-400 mt-2" role="alert">
+                      <FiAlertTriangle size={12} /> {enrollError}
+                    </div>
+                  )}
+                </div>
+              )}
+              {settings.helloEnabled && (
+                <Row
+                  stacked
+                  label="Require master password"
+                  hint="Periodically verify your master password even when Windows Hello is enabled. Default: 14 days."
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Segmented
+                      value={passwordEveryDays}
+                      options={PASSWORD_DAY_PRESETS}
+                      onChange={(v) => patchSettings({ requirePasswordEveryDays: v === 0 ? null : v })}
+                    />
+                    {!PASSWORD_DAY_PRESETS.some((p) => p.value === passwordEveryDays) && (
+                      <Stepper
+                        value={passwordEveryDays}
+                        min={1}
+                        max={365}
+                        suffix="days"
+                        onChange={(v) => patchSettings({ requirePasswordEveryDays: v })}
+                      />
+                    )}
+                  </div>
+                </Row>
+              )}
             </Section>
 
             <Section id="clipboard" title="Clipboard" description="Copied values are wiped automatically after a delay." icon={<FiClipboard size={14} />}>

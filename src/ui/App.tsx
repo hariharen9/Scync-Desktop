@@ -11,6 +11,7 @@ import { useUiStore } from '@/stores/uiStore.js';
 import { armAutoLock, lockNow, disarmAutoLock } from '@/lib/autoLock.js';
 import { listen, emit } from '@/auth/bridge.js';
 import { bridge } from '@/auth/bridge.js';
+import { isPasswordRequiredNow } from '@/lib/settings.js';
 import { ensureAuthReady } from '@/backend/firebase.js';
 import { recentItems, searchItems } from '@/lib/search.js';
 import { BrandMark, Spinner } from './components/primitives.js';
@@ -146,21 +147,60 @@ export default function App() {
   useEffect(() => {
     // Build the metadata payload for a query. An empty query returns the
     // recent items so the popup has something useful the instant it opens.
-    const answer = (q: string) => {
-      const phase = useVaultStore.getState().lockPhase;
-      const locked = phase !== 'unlocked';
+    const answer = async (q: string) => {
+      const vault = useVaultStore.getState();
+      const locked = vault.lockPhase !== 'unlocked';
       const index = locked ? [] : useDataStore.getState().metaIndex();
+      let helloAvailable = false;
+      let passwordRequired = false;
+      if (locked && vault.uid) {
+        const settings = useUiStore.getState().settings;
+        passwordRequired = isPasswordRequiredNow(settings);
+        if (settings.helloEnabled) {
+          const [avail, enrolled] = await Promise.all([
+            bridge.isBiometricAvailable().catch(() => false),
+            bridge.hasBiometricEnrolled(vault.uid).catch(() => false),
+          ]);
+          helloAvailable = avail && enrolled;
+        }
+      }
       void emit('quick:results', {
         items: locked ? [] : q.trim() ? searchItems(index, q) : recentItems(index),
         locked,
         ready: true,
+        helloAvailable,
+        passwordRequired,
       });
     };
 
     const stops = [
-      listen<{ q: string }>('quick:query', ({ q }) => answer(q)),
+      listen<{ q: string }>('quick:query', ({ q }) => { void answer(q); }),
       // The popup cleared its state on show; don't make it wait for a keystroke.
-      listen<null>('quick:shown', () => answer('')),
+      listen<null>('quick:shown', () => { void answer(''); }),
+      listen<null>('quick:unlock-hello', () => {
+        void (async () => {
+          const store = useVaultStore.getState();
+          const waitMs = store.nextAttemptAllowedAt - Date.now();
+          if (waitMs > 0) {
+            await emit('quick:unlock-result', {
+              ok: false,
+              message: `Too many attempts. Wait ${Math.ceil(waitMs / 1000)}s.`,
+            });
+            return;
+          }
+          const ok = await useVaultStore.getState().unlockWithBiometric();
+          if (ok) {
+            await emit('quick:unlock-result', { ok: true });
+          } else {
+            const err = useVaultStore.getState().error;
+            await emit('quick:unlock-result', {
+              ok: false,
+              cancelled: err === null,
+              message: err ?? undefined,
+            });
+          }
+        })();
+      }),
       // Unlock from the popup. The password is handed ONLY to this window,
       // which does the PBKDF2 derivation and keeps the key — it never reaches
       // the popup, and the popup never holds or derives a key.

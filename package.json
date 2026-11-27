@@ -1,7 +1,7 @@
 {
   "name": "scync-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.4.0",
   "description": "Scync Desktop — zero-knowledge secrets manager for macOS and Windows",
   "type": "module",
   "license": "MIT",

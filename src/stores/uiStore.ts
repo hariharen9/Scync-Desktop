@@ -21,6 +21,7 @@ interface UiState {
   selectedSecretId: string | null;
   /** id of the item whose form modal is open ('' = none) + the modal kind. */
   formModal: { kind: string | null; id: string | null };
+  sshImportPrefill: { name?: string; privateKey: string } | null;
   aboutOpen: boolean;
   commandPaletteOpen: boolean;
   confirm: { title: string; message: string; confirmText?: string; danger?: boolean; onConfirm: (() => void) | null } | null;
@@ -34,6 +35,7 @@ interface UiState {
   clearFilters: () => void;
   selectSecret: (id: string | null) => void;
   openForm: (kind: string, id?: string | null) => void;
+  openSshImport: (prefill: { name?: string; privateKey: string }) => void;
   closeForm: () => void;
   setAboutOpen: (open: boolean) => void;
   setCommandPaletteOpen: (open: boolean) => void;
@@ -60,6 +62,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   filter: DEFAULT_FILTER,
   selectedSecretId: null,
   formModal: { kind: null, id: null },
+  sshImportPrefill: null,
   aboutOpen: false,
   commandPaletteOpen: false,
   confirm: null,
@@ -94,7 +97,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   selectSecret: (id) => set({ selectedSecretId: id }),
 
   openForm: (kind, id = null) => set({ formModal: { kind, id } }),
-  closeForm: () => set({ formModal: { kind: null, id: null } }),
+  openSshImport: (prefill) => set({ formModal: { kind: 'ssh', id: null }, sshImportPrefill: prefill }),
+  closeForm: () => set({ formModal: { kind: null, id: null }, sshImportPrefill: null }),
 
   setAboutOpen: (open) => set({ aboutOpen: open }),
   setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),

@@ -19,19 +19,15 @@ import {
 } from 'react-icons/fi';
 import { useUiStore, type ProjectColor } from '@/stores/uiStore.js';
 import { useDataStore } from '@/stores/dataStore.js';
-import { getAttentionSecrets } from '@/backend/index.js';
+import { getAttentionSecrets, SECRET_TYPES, ENVIRONMENTS, STATUSES } from '@/backend/index.js';
 import {
   AlertBlock, ColorDot, EmptyState, RevealValue, formatDate,
 } from '@/ui/components/common.js';
-import { Chip, ListSkeleton, Skeleton } from '@/ui/components/primitives.js';
+import { Chip, CopyIconButton, ListSkeleton, Skeleton } from '@/ui/components/primitives.js';
 import { SPLIT_MIN, useElementWidth } from '@/ui/components/masterDetail.js';
 import { pushToast } from '@/ui/components/Toast.js';
 import { copyToSystemClipboard } from '@/lib/clipboard.js';
 import type { StoredSecret } from '@/backend/index.js';
-
-const ENVIRONMENTS = ['Personal', 'Work', 'Development', 'Staging', 'Production', 'Local', 'Testing', 'CI/CD'];
-const STATUSES = ['Active', 'Rotated', 'Expired', 'Revoked'];
-const SECRET_TYPES = ['API Key', 'Personal Access Token', 'OAuth Token', 'OAuth Client Secret', 'Recovery Codes', 'Secret Key', 'Webhook Secret', 'Service Account JSON', 'Database URL', 'License Key', 'Passphrase', 'Secret Note', 'Password', 'Other'];
 
 const STATUS_DOT: Record<string, string> = {
   Active: 'bg-emerald-400',
@@ -190,9 +186,9 @@ export default function SecretsView() {
 
             <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 hide-scrollbar">
               <FilterChip label="Service" value={filter.service} onChange={(v) => setFilter({ service: v })} options={services} />
-              <FilterChip label="Type" value={filter.type} onChange={(v) => setFilter({ type: v as typeof filter.type })} options={SECRET_TYPES} />
-              <FilterChip label="Env" value={filter.environment} onChange={(v) => setFilter({ environment: v as typeof filter.environment })} options={ENVIRONMENTS} />
-              <FilterChip label="Status" value={filter.status} onChange={(v) => setFilter({ status: v as typeof filter.status })} options={STATUSES} />
+              <FilterChip label="Type" value={filter.type} onChange={(v) => setFilter({ type: v as typeof filter.type })} options={[...SECRET_TYPES]} />
+              <FilterChip label="Env" value={filter.environment} onChange={(v) => setFilter({ environment: v as typeof filter.environment })} options={[...ENVIRONMENTS]} />
+              <FilterChip label="Status" value={filter.status} onChange={(v) => setFilter({ status: v as typeof filter.status })} options={[...STATUSES]} />
               <FilterChip label="Project" value={filter.projectId} onChange={(v) => setFilter({ projectId: v })} options={projects.map((p) => p.name)} />
               {hasFilters && (
                 <button className="shrink-0 text-[11px] text-muted hover:text-text px-1.5 py-1" onClick={clearFilters}>clear</button>
@@ -263,6 +259,185 @@ export default function SecretsView() {
             )}
           </div>
         )
+      )}
+    </div>
+  );
+}
+
+function RecoveryPhraseReveal({ decrypt }: { decrypt: () => Promise<string> }) {
+  const [words, setWords] = useState<string[] | null>(null);
+  const [remaining, setRemaining] = useState(0);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!words || remaining <= 0) return;
+    const t = setTimeout(() => {
+      if (remaining <= 1) {
+        setWords(null);
+        setRemaining(0);
+      } else {
+        setRemaining((r) => r - 1);
+      }
+    }, 1000);
+    return () => clearTimeout(t);
+  }, [words, remaining]);
+
+  const reveal = async () => {
+    if (words) {
+      setWords(null);
+      setRemaining(0);
+      return;
+    }
+    setLoading(true);
+    try {
+      const val = await decrypt();
+      const parsed = val.trim().split(/[\s,\n]+/).map((w) => w.replace(/^\d+[.):-]\s*/, '').trim()).filter(Boolean);
+      setWords(parsed);
+      setRemaining(15);
+    } catch (e) {
+      pushToast.fromError(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copyAll = async () => {
+    try {
+      const val = words ? words.join(' ') : await decrypt();
+      await copyToSystemClipboard(val, 'Recovery phrase copied');
+    } catch (e) {
+      pushToast.fromError(e);
+    }
+  };
+
+  return (
+    <div className="space-y-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <button type="button" className="btn-ghost !py-1 !px-2.5 text-[11.5px]" onClick={reveal} disabled={loading}>
+            {loading ? 'Decrypting…' : words ? `Hide (${remaining}s)` : 'Reveal phrase'}
+          </button>
+          <button type="button" className="btn-ghost !py-1 !px-2.5 text-[11.5px]" onClick={copyAll}>
+            Copy all
+          </button>
+        </div>
+        {words && <span className="mono-label text-subtle">{words.length} words</span>}
+      </div>
+      {words ? (
+        <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
+          {words.map((w, idx) => (
+            <button
+              key={`${idx}-${w}`}
+              type="button"
+              onClick={() => void copyToSystemClipboard(w, `Word #${idx + 1} copied`)}
+              className="flex items-center gap-1.5 rounded border border-border bg-white/[0.02] px-2 py-1 text-left hover:border-border-strong transition-colors"
+              title="Click to copy word"
+            >
+              <span className="font-mono text-[10px] text-subtle w-4 shrink-0">{idx + 1}.</span>
+              <span className="font-mono text-[12px] text-text truncate">{w}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="font-mono text-[12.5px] text-subtle tracking-widest py-1">•••• •••• •••• •••• •••• ••••</div>
+      )}
+    </div>
+  );
+}
+
+function OAuthClientSecretReveal({ decrypt }: { decrypt: () => Promise<string> }) {
+  const [parsed, setParsed] = useState<{ clientId?: string; clientSecret?: string } | null>(null);
+  const [rawFallback, setRawFallback] = useState<string | null>(null);
+  const [remaining, setRemaining] = useState(0);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if ((!parsed && rawFallback === null) || remaining <= 0) return;
+    const t = setTimeout(() => {
+      if (remaining <= 1) {
+        setParsed(null);
+        setRawFallback(null);
+        setRemaining(0);
+      } else {
+        setRemaining((r) => r - 1);
+      }
+    }, 1000);
+    return () => clearTimeout(t);
+  }, [parsed, rawFallback, remaining]);
+
+  const toggle = async () => {
+    if (parsed || rawFallback !== null) {
+      setParsed(null);
+      setRawFallback(null);
+      setRemaining(0);
+      return;
+    }
+    setLoading(true);
+    try {
+      const val = await decrypt();
+      try {
+        const obj = JSON.parse(val) as unknown;
+        if (obj && typeof obj === 'object' && ('clientId' in obj || 'clientSecret' in obj)) {
+          setParsed(obj as { clientId?: string; clientSecret?: string });
+          setRemaining(15);
+          return;
+        }
+      } catch {
+        // Not JSON — fall back to plain string
+      }
+      setRawFallback(val);
+      setRemaining(15);
+    } catch (e) {
+      pushToast.fromError(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (rawFallback !== null) {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <button type="button" className="btn-ghost !py-1 !px-2.5 text-[11.5px]" onClick={toggle}>
+            Hide ({remaining}s)
+          </button>
+          <CopyIconButton size={12} label="Copy value" onCopy={() => copyToSystemClipboard(rawFallback, 'Value copied')} />
+        </div>
+        <div className="font-mono text-[12.5px] text-text break-all">{rawFallback}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2.5">
+      <div className="flex items-center gap-2">
+        <button type="button" className="btn-ghost !py-1 !px-2.5 text-[11.5px]" onClick={toggle} disabled={loading}>
+          {loading ? 'Decrypting…' : parsed ? `Hide (${remaining}s)` : 'Reveal credentials'}
+        </button>
+      </div>
+      {parsed ? (
+        <div className="space-y-2">
+          {parsed.clientId && (
+            <div className="rounded border border-border bg-white/[0.02] px-2.5 py-1.5 flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="mono-label text-[9.5px] text-subtle">Client ID</div>
+                <div className="font-mono text-[12px] text-text break-all">{parsed.clientId}</div>
+              </div>
+              <CopyIconButton size={12} label="Copy Client ID" onCopy={() => copyToSystemClipboard(parsed.clientId!, 'Client ID copied')} />
+            </div>
+          )}
+          <div className="rounded border border-border bg-white/[0.02] px-2.5 py-1.5 flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="mono-label text-[9.5px] text-subtle">Client Secret</div>
+              <div className="font-mono text-[12px] text-text break-all">{parsed.clientSecret || '—'}</div>
+            </div>
+            {parsed.clientSecret && (
+              <CopyIconButton size={12} label="Copy Client Secret" onCopy={() => copyToSystemClipboard(parsed.clientSecret!, 'Client Secret copied')} />
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="font-mono text-[12.5px] text-subtle tracking-widest py-1">••••••••••••••••••••••••</div>
       )}
     </div>
   );
@@ -429,10 +604,18 @@ function SecretDetail({ secret, compact, onBack }: {
           {/* Primary value */}
           <section className="card p-4 mb-4">
             <div className="flex items-center justify-between mb-2">
-              <span className="mono-label">Value</span>
+              <span className="mono-label">
+                {stored.type === 'Recovery Phrase' ? 'Recovery phrase' : stored.type === 'OAuth Client Secret' ? 'OAuth credentials' : 'Value'}
+              </span>
               <span className="mono-label text-subtle/70 truncate max-w-[60%] text-right">{stored.service}</span>
             </div>
-            <RevealValue decrypt={() => decryptSecretById(stored.id).then((d) => d.value)} />
+            {stored.type === 'Recovery Phrase' ? (
+              <RecoveryPhraseReveal decrypt={() => decryptSecretById(stored.id).then((d) => d.value)} />
+            ) : stored.type === 'OAuth Client Secret' ? (
+              <OAuthClientSecretReveal decrypt={() => decryptSecretById(stored.id).then((d) => d.value)} />
+            ) : (
+              <RevealValue decrypt={() => decryptSecretById(stored.id).then((d) => d.value)} />
+            )}
           </section>
 
           {/* Metadata — auto-fitting grid so it uses width instead of a long column */}

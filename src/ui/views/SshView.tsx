@@ -17,14 +17,36 @@ export default function SshView() {
   const selectSecret = useUiStore((s) => s.selectSecret);
   const openForm = useUiStore((s) => s.openForm);
   const [query, setQuery] = useState('');
+  const [algoFilter, setAlgoFilter] = useState<'all' | 'ed25519' | 'rsa' | 'hosts'>('all');
   const searchRef = useRef<HTMLInputElement>(null);
 
   const sorted = useMemo(() => {
     const q = query.trim().toLowerCase();
     return [...sshKeys]
-      .filter((k) => !q || `${k.name} ${k.type} ${k.hosts.join(' ')} ${k.fingerprint}`.toLowerCase().includes(q))
+      .filter((k) => {
+        if (algoFilter === 'ed25519' && !k.type.toLowerCase().includes('ed25519')) return false;
+        if (algoFilter === 'rsa' && !k.type.toLowerCase().includes('rsa')) return false;
+        if (algoFilter === 'hosts' && (!k.hosts || k.hosts.length === 0)) return false;
+        return !q || `${k.name} ${k.type} ${k.hosts.join(' ')} ${k.fingerprint}`.toLowerCase().includes(q);
+      })
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [sshKeys, query]);
+  }, [sshKeys, query, algoFilter]);
+
+  const copySshConfig = () => {
+    const keysWithHosts = sshKeys.filter((k) => k.hosts && k.hosts.length > 0);
+    if (keysWithHosts.length === 0) {
+      pushToast('No mapped hosts', 'Add hosts to an SSH key to generate ~/.ssh/config.');
+      return;
+    }
+    let config = '# ── SCYNC SSH CONFIG ─────────────────────────────────\n# Add to ~/.ssh/config (chmod 400 ~/.ssh/*.pem)\n\n';
+    for (const key of keysWithHosts) {
+      const slug = key.name.toLowerCase().replace(/[^a-z0-9-_]+/g, '-').replace(/^-|-$/g, '') || 'key';
+      for (const host of key.hosts) {
+        config += `Host ${host}\n  HostName ${host}\n  IdentityFile ~/.ssh/${slug}.pem\n  IdentitiesOnly yes\n\n`;
+      }
+    }
+    void copyToSystemClipboard(config, '~/.ssh/config copied');
+  };
 
   const selected = sshKeys.find((k) => k.id === selectedId) ?? null;
   const hasFilter = query.trim() !== '';
@@ -58,12 +80,39 @@ export default function SshView() {
             onNew={() => openForm('ssh')}
           >
             {sshKeys.length > 0 && (
-              <SearchField
-                inputRef={searchRef}
-                value={query}
-                onChange={setQuery}
-                placeholder="Filter keys…"
-              />
+              <div className="space-y-2">
+                <SearchField
+                  inputRef={searchRef}
+                  value={query}
+                  onChange={setQuery}
+                  placeholder="Filter keys…"
+                />
+                <div className="flex items-center gap-1 flex-wrap">
+                  {(['all', 'ed25519', 'rsa', 'hosts'] as const).map((tab) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => setAlgoFilter(tab)}
+                      className={
+                        'px-2 py-0.5 rounded text-[10.5px] font-mono uppercase transition-colors ' +
+                        (algoFilter === tab
+                          ? 'bg-accent-dim text-accent-light border border-accent-border'
+                          : 'text-muted hover:text-text border border-border')
+                      }
+                    >
+                      {tab}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={copySshConfig}
+                    className="ml-auto px-2 py-0.5 rounded text-[10.5px] font-mono border border-border text-muted hover:text-text transition-colors"
+                    title="Copy ~/.ssh/config for keys with mapped hosts"
+                  >
+                    ~/.ssh/config
+                  </button>
+                </div>
+              </div>
             )}
           </ListHeader>
 

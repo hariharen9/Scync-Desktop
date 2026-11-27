@@ -8,18 +8,15 @@ import forge from 'node-forge';
 import { FiX } from 'react-icons/fi';
 import { useUiStore, type Environment, type SecretStatus, type SecretType, type ProjectColor } from '@/stores/uiStore.js';
 import { useDataStore } from '@/stores/dataStore.js';
-import { generateSSHKeyPair } from '@/backend/index.js';
-import { parseCertificatePem, validateCertKeyPair } from '@/backend/index.js';
+import {
+  SERVICES, SECRET_TYPES, ENVIRONMENTS, STATUSES,
+  generateSSHKeyPair, parseSSHPrivateKey, looksLikeSSHPrivateKey,
+  computeOpenSSHFingerprint, detectSSHKeyType,
+  parseCertificatePem, validateCertKeyPair,
+} from '@/backend/index.js';
 import { pushToast } from './Toast.js';
 import { useEscape } from './primitives.js';
 
-const ENVIRONMENTS: Environment[] = ['Personal', 'Work', 'Development', 'Staging', 'Production', 'Local', 'Testing', 'CI/CD'];
-const STATUSES: SecretStatus[] = ['Active', 'Rotated', 'Expired', 'Revoked'];
-const SECRET_TYPES: SecretType[] = [
-  'API Key', 'Personal Access Token', 'OAuth Token', 'OAuth Client Secret',
-  'Recovery Codes', 'Secret Key', 'Webhook Secret', 'Service Account JSON',
-  'Database URL', 'License Key', 'Passphrase', 'Secret Note', 'Password', 'Other',
-];
 const PROJECT_COLORS: ProjectColor[] = ['violet', 'blue', 'green', 'orange', 'red', 'pink', 'yellow', 'gray'];
 const COLOR_HEX: Record<ProjectColor, string> = {
   violet: '#8b5cf6', blue: '#3b82f6', green: '#10b981', orange: '#f97316',
@@ -122,10 +119,27 @@ function Actions({ busy, canSubmit, label }: { busy: boolean; canSubmit: boolean
 
 // ─── Secret ───
 
+function generateRandomSecret(type: SecretType): string {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  if (type === 'Webhook Secret') return `whsec_${hex}`;
+  if (type === 'License Key') {
+    const upper = hex.slice(0, 20).toUpperCase();
+    return `${upper.slice(0, 5)}-${upper.slice(5, 10)}-${upper.slice(10, 15)}-${upper.slice(15, 20)}`;
+  }
+  return hex;
+}
+
+const GENERATABLE_TYPES = new Set<SecretType>([
+  'API Key', 'Secret Key', 'Webhook Secret', 'Passphrase', 'Password', 'License Key',
+]);
+
 function SecretForm({ id, onDone }: FormProps) {
   const secrets = useDataStore((s) => s.secrets);
   const projects = useDataStore((s) => s.projects);
   const writeSecret = useDataStore((s) => s.writeSecret);
+  const openSshImport = useUiStore((s) => s.openSshImport);
   const stored = id ? secrets.find((s) => s.id === id) ?? null : null;
   const editing = stored !== null;
 
@@ -135,6 +149,8 @@ function SecretForm({ id, onDone }: FormProps) {
   const [environment, setEnvironment] = useState<Environment>(stored?.environment ?? 'Development');
   const [status, setStatus] = useState<SecretStatus>(stored?.status ?? 'Active');
   const [value, setValue] = useState('');
+  const [oauthClientId, setOauthClientId] = useState('');
+  const [oauthClientSecret, setOauthClientSecret] = useState('');
   const [notes, setNotes] = useState('');
   const [projectId, setProjectId] = useState<string>(stored?.projectId ?? '');
   const [lastRotated, setLastRotated] = useState(toDateInputValue(stored?.lastRotated ?? null));
@@ -142,14 +158,28 @@ function SecretForm({ id, onDone }: FormProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const phraseWords = useMemo(() => {
+    if (type !== 'Recovery Phrase') return [];
+    return value.trim().split(/[\s,\n]+/).map((w) => w.replace(/^\d+[.):-]\s*/, '').trim()).filter(Boolean);
+  }, [type, value]);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    let effectiveValue = value;
+    if (type === 'OAuth Client Secret' && (oauthClientId.trim() || oauthClientSecret.trim())) {
+      effectiveValue = JSON.stringify({
+        clientId: oauthClientId.trim(),
+        clientSecret: oauthClientSecret.trim(),
+      });
+    } else if (type === 'Recovery Phrase' && effectiveValue.trim()) {
+      effectiveValue = phraseWords.join(' ');
+    }
     // Editing keeps the stored ciphertext when the value field was left blank.
-    if (!editing && !value.trim()) { setError('Value is required'); return; }
+    if (!editing && !effectiveValue.trim()) { setError('Value is required'); return; }
     setBusy(true);
     try {
-      let currentValue = value;
+      let currentValue = effectiveValue;
       let currentNotes = notes;
       if (editing && stored) {
         const dec = await useDataStore.getState().decryptSecretById(stored.id);
@@ -159,7 +189,7 @@ function SecretForm({ id, onDone }: FormProps) {
       await writeSecret(
         {
           name: name.trim(),
-          service: service.trim() || 'other',
+          service: service.trim() || 'Other',
           type,
           environment,
           status,
@@ -187,7 +217,18 @@ function SecretForm({ id, onDone }: FormProps) {
       <div className="space-y-3">
         <Row>
           <Field label="Name"><input className="field" value={name} onChange={(e) => setName(e.target.value)} required /></Field>
-          <Field label="Service"><input className="field" value={service} onChange={(e) => setService(e.target.value)} placeholder="e.g. AWS, GitHub…" /></Field>
+          <Field label="Service">
+            <input
+              className="field"
+              list="scync-services-list"
+              value={service}
+              onChange={(e) => setService(e.target.value)}
+              placeholder="e.g. OpenAI, AWS, Supabase…"
+            />
+            <datalist id="scync-services-list">
+              {SERVICES.map((s) => <option key={s} value={s} />)}
+            </datalist>
+          </Field>
         </Row>
         <Row>
           <Field label="Type">
@@ -214,9 +255,54 @@ function SecretForm({ id, onDone }: FormProps) {
             </select>
           </Field>
         </Row>
-        <Field label={editing ? `Value (leave blank to keep ${editing ? 'current' : ''})` : 'Value'}>
-          <textarea className="field font-mono text-[12px]" rows={3} value={value} onChange={(e) => setValue(e.target.value)} />
-        </Field>
+        {type === 'OAuth Client Secret' ? (
+          <Row>
+            <Field label={editing ? 'Client ID (optional)' : 'Client ID'}>
+              <input className="field font-mono text-[12px]" value={oauthClientId} onChange={(e) => setOauthClientId(e.target.value)} placeholder="client_id…" />
+            </Field>
+            <Field label={editing ? 'Client Secret (blank keeps current)' : 'Client Secret'}>
+              <input className="field font-mono text-[12px]" value={oauthClientSecret} onChange={(e) => setOauthClientSecret(e.target.value)} placeholder="client_secret…" />
+            </Field>
+          </Row>
+        ) : (
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="mono-label">
+                {type === 'Recovery Phrase'
+                  ? `Recovery phrase${phraseWords.length > 0 ? ` (${phraseWords.length} words)` : ''}`
+                  : editing ? 'Value (leave blank to keep current)' : 'Value'}
+              </span>
+              {GENERATABLE_TYPES.has(type) && (
+                <button
+                  type="button"
+                  className="text-[11px] font-mono text-accent-light hover:underline"
+                  onClick={() => setValue(generateRandomSecret(type))}
+                >
+                  Generate
+                </button>
+              )}
+            </div>
+            <textarea
+              className="field font-mono text-[12px]"
+              rows={type === 'Recovery Phrase' ? 4 : 3}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder={type === 'Recovery Phrase' ? 'Paste 12 or 24 recovery words (spaces, commas, or numbered lines)…' : undefined}
+            />
+            {looksLikeSSHPrivateKey(value) && (
+              <div className="mt-2 flex items-center justify-between gap-2 rounded border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2">
+                <span className="text-[11.5px] text-muted">Looks like an SSH / <code className="font-mono">.pem</code> private key.</span>
+                <button
+                  type="button"
+                  className="btn-ghost !py-1 !px-2 text-[11px] text-emerald-300 border-emerald-500/40"
+                  onClick={() => openSshImport({ name: name.trim() || undefined, privateKey: value })}
+                >
+                  Store in SSH Manager
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         <Field label="Notes"><textarea className="field" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
         <Row>
           <Field label="Last rotated"><input type="date" className="field" value={lastRotated} onChange={(e) => setLastRotated(e.target.value)} /></Field>
@@ -304,18 +390,43 @@ function SshForm({ id, onDone }: FormProps) {
   const sshKeys = useDataStore((s) => s.sshKeys);
   const writeSshKey = useDataStore((s) => s.writeSshKey);
   const updateSshKeyMeta = useDataStore((s) => s.updateSshKeyMeta);
+  const sshImportPrefill = useUiStore((s) => s.sshImportPrefill);
   const stored = id ? sshKeys.find((k) => k.id === id) ?? null : null;
   const editing = stored !== null;
 
-  const [name, setName] = useState(stored?.name ?? '');
+  const [name, setName] = useState(stored?.name ?? sshImportPrefill?.name ?? '');
   const [hosts, setHosts] = useState(stored?.hosts.join(', ') ?? '');
   const [rotationDate, setRotationDate] = useState(toDateInputValue(stored?.rotationDate ?? null));
   const [pub, setPub] = useState('');
-  const [priv, setPriv] = useState('');
+  const [priv, setPriv] = useState(sshImportPrefill?.privateKey ?? '');
+  const [passphrase, setPassphrase] = useState('');
+  const [needsPassphrase, setNeedsPassphrase] = useState(false);
+  const [passphraseError, setPassphraseError] = useState<string | undefined>(undefined);
+  const [detectedType, setDetectedType] = useState<string>('');
   const [genType, setGenType] = useState<'ed25519' | 'rsa'>('ed25519');
   const [generating, setGenerating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Auto-derive public key, fingerprint, and key type from pasted PEM / OpenSSH private key.
+  useEffect(() => {
+    if (editing || !priv.trim()) {
+      setNeedsPassphrase(false);
+      setPassphraseError(undefined);
+      return;
+    }
+    let cancelled = false;
+    void parseSSHPrivateKey(priv, passphrase || undefined, name.trim() || undefined).then((parsed) => {
+      if (cancelled) return;
+      setNeedsPassphrase(parsed.needsPassphrase);
+      setPassphraseError(parsed.passphraseError);
+      setDetectedType(parsed.type);
+      if (parsed.publicKey) {
+        setPub(parsed.publicKey);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [priv, passphrase, name, editing]);
 
   const fingerprint = useMemo(() => {
     if (!pub.trim()) return '';
@@ -324,18 +435,15 @@ function SshForm({ id, onDone }: FormProps) {
     };
     try {
       const parsed = sshModule.publicKeyFromSSHPubKey?.(pub.trim());
-      if (!parsed) throw new Error('not an OpenSSH public key');
-      return String(forge.ssh.getPublicKeyFingerprint(parsed, { encoding: 'hex', delimiter: ':' }));
+      if (parsed) return `MD5:${forge.ssh.getPublicKeyFingerprint(parsed, { encoding: 'hex', delimiter: ':' })}`;
     } catch {
-      try {
-        // PEM-format public key
-        const parsed = forge.pki.publicKeyFromPem(pub.trim());
-        return String(forge.ssh.getPublicKeyFingerprint(parsed, { encoding: 'hex', delimiter: ':' }));
-      } catch {
-        return '';
-      }
+      // Fall back to OpenSSH base64 fingerprint helper
     }
+    const fp = computeOpenSSHFingerprint(pub.trim());
+    return fp === 'Unknown' ? '' : fp;
   }, [pub]);
+
+  const resolvedType = pub.trim() ? detectSSHKeyType(pub.trim()) : (detectedType || 'ssh-rsa');
 
   const generate = async () => {
     setError(null);
@@ -344,6 +452,7 @@ function SshForm({ id, onDone }: FormProps) {
       const pair = await generateSSHKeyPair(name.trim() || 'scync-generated', genType);
       setPub(pair.publicKey);
       setPriv(pair.privateKey);
+      setDetectedType(pair.type);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -355,8 +464,8 @@ function SshForm({ id, onDone }: FormProps) {
     e.preventDefault();
     setError(null);
     if (!editing) {
-      if (!pub.trim() || !priv.trim()) { setError('Public and private key are required'); return; }
-      if (!fingerprint) { setError('Could not parse public key (OpenSSH one-line or PEM expected)'); return; }
+      if (!priv.trim()) { setError('Private key is required'); return; }
+      if (needsPassphrase) { setError(passphraseError || 'Passphrase required to decrypt private key'); return; }
     }
     setBusy(true);
     try {
@@ -369,9 +478,9 @@ function SshForm({ id, onDone }: FormProps) {
       } else {
         await writeSshKey({
           name: name.trim(),
-          type: pub.startsWith('ssh-') ? pub.split(' ')[0] : 'unknown',
+          type: resolvedType,
           publicKey: pub.trim(),
-          fingerprint,
+          fingerprint: fingerprint || 'Unknown',
           privateKey: priv.trim(),
           hosts: hostList,
         });
@@ -417,15 +526,20 @@ function SshForm({ id, onDone }: FormProps) {
               </button>
             </div>
           </Field>
-          <Field label="Key type (from public key)">
-            <input className="field" value={pub.startsWith('ssh-') ? pub.split(' ')[0] : ''} readOnly placeholder="—" />
+          <Field label="Key type (detected)">
+            <input className="field" value={resolvedType} readOnly placeholder="—" />
           </Field>
         </Row>
+        <Field label="Private key (OpenSSH or PEM — auto-derives public key)">
+          <textarea className="field font-mono text-[11px]" rows={3} value={priv} onChange={(e) => setPriv(e.target.value)} />
+        </Field>
+        {needsPassphrase && (
+          <Field label="Key passphrase" hint={passphraseError}>
+            <input className="field" type="password" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} placeholder="Enter passphrase to derive public key…" />
+          </Field>
+        )}
         <Field label="Public key (OpenSSH or PEM)" hint={fingerprint ? `Fingerprint: ${fingerprint}` : undefined}>
           <textarea className="field font-mono text-[11px]" rows={3} value={pub} onChange={(e) => setPub(e.target.value)} />
-        </Field>
-        <Field label="Private key">
-          <textarea className="field font-mono text-[11px]" rows={3} value={priv} onChange={(e) => setPriv(e.target.value)} />
         </Field>
         <Field label="Hosts (comma-separated)"><input className="field" value={hosts} onChange={(e) => setHosts(e.target.value)} placeholder="host1, host2" /></Field>
       </div>

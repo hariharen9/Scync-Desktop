@@ -13,6 +13,7 @@ mod commands;
 mod oauth;
 mod settings;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
@@ -23,8 +24,11 @@ use tauri_plugin_autostart::MacosLauncher;
 pub const MAIN_WINDOW: &str = "main";
 pub const QUICK_WINDOW: &str = "quick";
 
+pub struct VaultLockState(pub AtomicBool);
+
 fn main() {
     tauri::Builder::default()
+        .manage(VaultLockState(AtomicBool::new(false)))
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // Second launch: recreate (if destroyed), then focus the main window.
             commands::ensure_main_window(app);
@@ -66,6 +70,7 @@ fn main() {
             commands::unlock_with_biometric,
             commands::clear_biometric,
             commands::destroy_main_if_hidden,
+            commands::set_vault_unlocked,
         ])
         .setup(|app| {
             let settings = settings::load(app.handle());
@@ -119,16 +124,26 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Closing the main window only hides it; the process stays in the
-            // tray so the global hotkey keeps working. Quit via tray / Cmd+Q.
+            // Closing the main window hides it when unlocked (so quick search
+            // stays instant) and destroys its WebView2 immediately when locked
+            // (dropping tray RAM to ~5 MB). Quit via tray / Cmd+Q.
             if window.label() == MAIN_WINDOW {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
-                    let _ = window.hide();
+                    let unlocked = window
+                        .app_handle()
+                        .state::<VaultLockState>()
+                        .0
+                        .load(Ordering::Relaxed);
+                    if unlocked {
+                        let _ = window.hide();
+                    } else {
+                        let _ = window.destroy();
+                    }
                 }
             } else if window.label() == QUICK_WINDOW {
                 if let WindowEvent::Focused(false) = event {
-                    let _ = window.hide();
+                    let _ = window.destroy();
                 }
             }
         })

@@ -261,14 +261,25 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Settings + auto-lock armed only while unlocked.
+  // Settings + auto-lock armed only while unlocked + sync lock state to Rust.
   useEffect(() => {
     void useUiStore.getState().reloadSettings();
+    void bridge.setVaultUnlocked(lockPhase === 'unlocked').catch(() => undefined);
     if (lockPhase === 'unlocked') {
       armAutoLock();
       return disarmAutoLock;
     }
   }, [lockPhase]);
+
+  // Pause CSS animations/transitions when the window is hidden in the tray.
+  useEffect(() => {
+    const sync = () => {
+      document.documentElement.dataset.hidden = document.hidden ? 'true' : 'false';
+    };
+    sync();
+    document.addEventListener('visibilitychange', sync);
+    return () => document.removeEventListener('visibilitychange', sync);
+  }, []);
 
   // Meta refresh after returning from web setup: re-check on window focus.
   useEffect(() => {

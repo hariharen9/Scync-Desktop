@@ -485,3 +485,12 @@ select {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* Pause all CSS animations and transitions when the window is hidden in tray
+   so WebView2 GPU/renderer CPU usage drops to ~0%. */
+html[data-hidden="true"] *,
+html[data-hidden="true"] *::before,
+html[data-hidden="true"] *::after {
+  animation-play-state: paused !important;
+  transition: none !important;
+}

@@ -4,12 +4,13 @@ use crate::biometric;
 use crate::oauth;
 use crate::settings::{self, Settings};
 use sha2::{Digest, Sha256};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
-use crate::{MAIN_WINDOW, QUICK_WINDOW};
+use crate::{VaultLockState, MAIN_WINDOW, QUICK_WINDOW};
 
 // ─── Google sign-in (loopback flow in Rust, sign-in completion in the webview) ───
 
@@ -124,11 +125,12 @@ pub fn toggle_quick(app: AppHandle) {
     let _ = quick.emit("quick:shown", ());
 }
 
-/// Hide the quick popup (called by the popup itself on Esc / after copy).
+/// Hide/destroy the quick popup (called by the popup itself on Esc / after copy).
+/// Destroying frees its WebView2 renderer memory immediately when not in use.
 #[tauri::command]
 pub fn hide_quick_window(app: AppHandle) -> Result<(), String> {
     if let Some(quick) = app.get_webview_window(QUICK_WINDOW) {
-        quick.hide().map_err(|e| e.to_string())?;
+        quick.destroy().map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -319,6 +321,13 @@ pub fn destroy_main_if_hidden(app: AppHandle) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Sync the vault lock state to Rust so CloseRequested knows whether to hide
+/// (when unlocked) or destroy the WebView2 immediately (when locked).
+#[tauri::command]
+pub fn set_vault_unlocked(state: State<'_, VaultLockState>, unlocked: bool) {
+    state.0.store(unlocked, Ordering::Relaxed);
 }
 
 // ─── Windows Hello / Biometric unlock ───

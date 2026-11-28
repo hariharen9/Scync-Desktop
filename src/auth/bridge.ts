@@ -100,6 +100,10 @@ export const bridge = {
     if (!isTauri) return Promise.resolve();
     return invoke('destroy_main_if_hidden');
   },
+  setVaultUnlocked(unlocked: boolean): Promise<void> {
+    if (!isTauri) return Promise.resolve();
+    return invoke('set_vault_unlocked', { unlocked });
+  },
 };
 
 /**

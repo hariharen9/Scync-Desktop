@@ -11,7 +11,7 @@
  */
 import { useVaultStore } from '@/stores/vaultStore.js';
 import { useUiStore } from '@/stores/uiStore.js';
-import { emit } from '@/auth/bridge.js';
+import { bridge, emit } from '@/auth/bridge.js';
 
 const ACTIVITY_EVENTS: Array<keyof WindowEventMap> = [
   'mousedown',
@@ -51,7 +51,7 @@ export function armAutoLock(): void {
   };
   document.addEventListener('visibilitychange', onVisibility);
 
-  activityTimer = setInterval(tick, 1000);
+  activityTimer = setInterval(tick, 5000);
   stopFns.push(
     () => {
       for (const ev of ACTIVITY_EVENTS) window.removeEventListener(ev, touch);
@@ -117,4 +117,9 @@ export function lockNow(reason: string): void {
   lastActivity = Date.now();
   // Tell the quick-search window to clear results and show its locked state.
   void emit('vault:locked', { reason });
+  // If the main window is hidden in the tray, tear down its WebView2 process
+  // so it uses ~0 MB in the background until reopened.
+  if (typeof document !== 'undefined' && document.hidden && reason !== 'sign-out') {
+    void bridge.destroyMainIfHidden().catch(() => undefined);
+  }
 }

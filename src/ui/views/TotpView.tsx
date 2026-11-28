@@ -107,9 +107,29 @@ function TotpCard({ id, index }: { id: string; index: number }) {
           .catch((e) => { if (!cancelled) { setCode(null); setError(e instanceof Error ? e.message : String(e)); } });
       }
     };
-    tick();
-    const t = setInterval(tick, 1000);
-    return () => { cancelled = true; clearInterval(t); };
+    let t: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (t !== null) return;
+      tick();
+      t = setInterval(tick, 1000);
+    };
+    const stop = () => {
+      if (t !== null) {
+        clearInterval(t);
+        t = null;
+      }
+    };
+    const onVis = () => {
+      if (document.hidden) stop();
+      else start();
+    };
+    if (!document.hidden) start();
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      cancelled = true;
+      stop();
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, [id, period, totpCodeFor, code, error]);
 
   if (!stored) return null;

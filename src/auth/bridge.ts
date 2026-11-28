@@ -96,6 +96,10 @@ export const bridge = {
     if (!isTauri) return Promise.resolve();
     return invoke('clear_biometric', { uid });
   },
+  destroyMainIfHidden(): Promise<void> {
+    if (!isTauri) return Promise.resolve();
+    return invoke('destroy_main_if_hidden');
+  },
 };
 
 /**

@@ -81,43 +81,47 @@ pub fn copy_with_auto_clear(text: &str, clear_after_secs: u64) -> Result<(), Str
 // ─── Quick-search popup ───
 
 /// Toggle the quick-search popup on the monitor under the cursor.
-/// Emits `quick:shown` to the popup once visible so its JS can ask the main
-/// window for fresh results / lock state.
+/// Creates the popup lazily on first use, and ensures the main window exists
+/// (hidden) if it was destroyed while locked in the tray.
 pub fn toggle_quick(app: AppHandle) {
-    if let Some(quick) = app.get_webview_window(QUICK_WINDOW) {
-        if quick.is_visible().unwrap_or(false) {
-            let _ = quick.hide();
-            return;
-        }
+    ensure_main_window_hidden(&app);
+    let quick = match ensure_quick_window(&app) {
+        Some(w) => w,
+        None => return,
+    };
 
-        // Position centred-ish on the monitor under the cursor.
-        if let Some(pos) = app.cursor_position().ok() {
-            let monitors = app.available_monitors().unwrap_or_default();
-            let target = monitors.into_iter().find(|m| {
-                let mp = m.position();
-                let ms = m.size();
-                pos.x >= mp.x as f64
-                    && pos.x < mp.x as f64 + ms.width as f64
-                    && pos.y >= mp.y as f64
-                    && pos.y < mp.y as f64 + ms.height as f64
-            });
-
-            if let Some(m) = target {
-                let mp = m.position();
-                let ms = m.size();
-                let window_w = 640.0;
-                let window_h = 540.0;
-                let scale = m.scale_factor();
-                let x = mp.x as f64 + (ms.width as f64 / scale - window_w) / 2.0;
-                let y = mp.y as f64 + (ms.height as f64 / scale - window_h) * 0.3;
-                let _ = quick.set_position(tauri::PhysicalPosition::new(x.max(0.0), y.max(0.0)));
-            }
-        }
-
-        let _ = quick.show();
-        let _ = quick.set_focus();
-        let _ = quick.emit("quick:shown", ());
+    if quick.is_visible().unwrap_or(false) {
+        let _ = quick.hide();
+        return;
     }
+
+    // Position centred-ish on the monitor under the cursor.
+    if let Some(pos) = app.cursor_position().ok() {
+        let monitors = app.available_monitors().unwrap_or_default();
+        let target = monitors.into_iter().find(|m| {
+            let mp = m.position();
+            let ms = m.size();
+            pos.x >= mp.x as f64
+                && pos.x < mp.x as f64 + ms.width as f64
+                && pos.y >= mp.y as f64
+                && pos.y < mp.y as f64 + ms.height as f64
+        });
+
+        if let Some(m) = target {
+            let mp = m.position();
+            let ms = m.size();
+            let window_w = 640.0;
+            let window_h = 540.0;
+            let scale = m.scale_factor();
+            let x = mp.x as f64 + (ms.width as f64 / scale - window_w) / 2.0;
+            let y = mp.y as f64 + (ms.height as f64 / scale - window_h) * 0.3;
+            let _ = quick.set_position(tauri::PhysicalPosition::new(x.max(0.0), y.max(0.0)));
+        }
+    }
+
+    let _ = quick.show();
+    let _ = quick.set_focus();
+    let _ = quick.emit("quick:shown", ());
 }
 
 /// Hide the quick popup (called by the popup itself on Esc / after copy).
@@ -132,6 +136,7 @@ pub fn hide_quick_window(app: AppHandle) -> Result<(), String> {
 /// Show and focus the main window (tray "Open", popup "Unlock" action).
 #[tauri::command]
 pub fn show_main_window(app: AppHandle) -> Result<(), String> {
+    ensure_main_window(&app);
     show_main(&app);
     Ok(())
 }
@@ -253,15 +258,67 @@ pub fn open_external(url: String) -> Result<(), String> {
     open::that(trimmed).map_err(|e| e.to_string())
 }
 
-/// Recreate a webview window (used to reopen the main window if destroyed).
+/// Recreate the main webview window (used to reopen the main window if destroyed).
 pub fn ensure_main_window(app: &AppHandle) {
     if app.get_webview_window(MAIN_WINDOW).is_none() {
-        let _ = WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::App("index.html".into()))
+        let content_protection = settings::load(app).content_protection;
+        if let Ok(win) = WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::App("index.html".into()))
             .title("Scync")
             .inner_size(1200.0, 800.0)
             .min_inner_size(960.0, 640.0)
-            .build();
+            .center()
+            .build()
+        {
+            let _ = win.set_content_protected(content_protection);
+        }
     }
+}
+
+/// Recreate the main webview window hidden (when quick search needs it while locked).
+pub fn ensure_main_window_hidden(app: &AppHandle) {
+    if app.get_webview_window(MAIN_WINDOW).is_none() {
+        let content_protection = settings::load(app).content_protection;
+        if let Ok(win) = WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::App("index.html".into()))
+            .title("Scync")
+            .inner_size(1200.0, 800.0)
+            .min_inner_size(960.0, 640.0)
+            .visible(false)
+            .build()
+        {
+            let _ = win.set_content_protected(content_protection);
+        }
+    }
+}
+
+/// Create the quick-search popup window lazily on demand.
+pub fn ensure_quick_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
+    if let Some(w) = app.get_webview_window(QUICK_WINDOW) {
+        return Some(w);
+    }
+    WebviewWindowBuilder::new(app, QUICK_WINDOW, WebviewUrl::App("quick.html".into()))
+        .title("Scync Quick Search")
+        .inner_size(640.0, 540.0)
+        .visible(false)
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .focused(false)
+        .build()
+        .ok()
+}
+
+/// Destroy the main window when it is hidden and locked, freeing its WebView2
+/// renderer memory while keeping the lightweight Rust tray/hotkey process alive.
+#[tauri::command]
+pub fn destroy_main_if_hidden(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window(MAIN_WINDOW) {
+        if !win.is_visible().unwrap_or(true) {
+            let _ = win.destroy();
+        }
+    }
+    Ok(())
 }
 
 // ─── Windows Hello / Biometric unlock ───

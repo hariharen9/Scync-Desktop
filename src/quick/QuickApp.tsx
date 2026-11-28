@@ -161,6 +161,16 @@ export default function QuickApp({ initialResults }: { initialResults?: ResultsP
     return () => clearTimeout(t);
   }, [query]);
 
+  // If main was destroyed while locked in the tray and is booting up on demand,
+  // poll briefly until `results.ready` lands.
+  useEffect(() => {
+    if (results.ready) return;
+    const t = setInterval(() => {
+      void emit('quick:query', { q: query });
+    }, 400);
+    return () => clearInterval(t);
+  }, [results.ready, query]);
+
   const items = results.items;
   const trimmed = query.trim();
   const searching = trimmed !== '';

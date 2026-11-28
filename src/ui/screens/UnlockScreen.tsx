@@ -69,10 +69,22 @@ export default function UnlockScreen({
   const settings = useUiStore((s) => s.settings);
   const settingsLoaded = useUiStore((s) => s.settingsLoaded);
   const [helloReady, setHelloReady] = useState(false);
+  const [isVisible, setIsVisible] = useState(() => (typeof document === 'undefined' ? true : !document.hidden));
   const autoPromptedRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const passwordRequired = isPasswordRequiredNow(settings);
+
+  // Track window visibility so Windows Hello NEVER auto-prompts while hidden in tray.
+  useEffect(() => {
+    const sync = () => setIsVisible(!document.hidden);
+    document.addEventListener('visibilitychange', sync);
+    window.addEventListener('focus', sync);
+    return () => {
+      document.removeEventListener('visibilitychange', sync);
+      window.removeEventListener('focus', sync);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -89,18 +101,26 @@ export default function UnlockScreen({
     return () => { cancelled = true; };
   }, [settingsLoaded, settings.helloEnabled, uid]);
 
-  // Auto-prompt Windows Hello once per lock cycle when enabled and within the password-free window.
+  // Auto-prompt Windows Hello once per lock cycle ONLY when the window is visible
+  // and within the password-free window.
   useEffect(() => {
-    if (!helloReady || passwordRequired || unlocking || justSucceeded || autoPromptedRef.current) return;
+    if (!isVisible || !helloReady || passwordRequired || unlocking || justSucceeded || autoPromptedRef.current) return;
     if (Date.now() < nextAttemptAllowedAt) return;
     autoPromptedRef.current = true;
     void unlockWithBiometric();
-  }, [helloReady, passwordRequired, unlocking, justSucceeded, nextAttemptAllowedAt, unlockWithBiometric]);
+  }, [isVisible, helloReady, passwordRequired, unlocking, justSucceeded, nextAttemptAllowedAt, unlockWithBiometric]);
 
+  // Only tick every 250ms while rate-limited; 0 background timers otherwise.
   useEffect(() => {
-    const t = setInterval(() => setNowMs(Date.now()), 250);
+    if (nextAttemptAllowedAt <= Date.now()) return;
+    setNowMs(Date.now());
+    const t = setInterval(() => {
+      const now = Date.now();
+      setNowMs(now);
+      if (now >= nextAttemptAllowedAt) clearInterval(t);
+    }, 250);
     return () => clearInterval(t);
-  }, []);
+  }, [nextAttemptAllowedAt]);
 
   // Keep focus on the password field: typing anywhere lands here (web-app trick).
   useEffect(() => {

@@ -16,7 +16,7 @@ mod settings;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
-    Emitter, Manager, WebviewWindowBuilder, WindowEvent,
+    Emitter, Manager, WindowEvent,
 };
 use tauri_plugin_autostart::MacosLauncher;
 
@@ -65,37 +65,13 @@ fn main() {
             commands::enroll_biometric,
             commands::unlock_with_biometric,
             commands::clear_biometric,
+            commands::destroy_main_if_hidden,
         ])
         .setup(|app| {
             let settings = settings::load(app.handle());
 
-            // Quick-search popup window: frameless, transparent, always on
-            // top, skip taskbar. Created hidden; toggled by the hotkey or tray.
-            let quick = WebviewWindowBuilder::new(
-                app,
-                QUICK_WINDOW,
-                tauri::WebviewUrl::App("quick.html".into()),
-            )
-            .title("Scync Quick Search")
-            .inner_size(640.0, 540.0)
-            .visible(false)
-            .decorations(false)
-            .transparent(true)
-            .always_on_top(true)
-            .skip_taskbar(true)
-            .resizable(false)
-            .focused(false)
-            .build()?;
-
-            // Hide the popup when it loses focus (click elsewhere).
-            {
-                let quick_w = quick.clone();
-                quick.on_window_event(move |event| {
-                    if let WindowEvent::Focused(false) = event {
-                        let _ = quick_w.hide();
-                    }
-                });
-            }
+            // Note: quick-search popup is created lazily on first hotkey/tray press
+            // so startup and idle tray memory stay minimal.
 
             // Tray with a menu mirroring the spec (section 3.5).
             let open_item = MenuItem::with_id(app, "open", "Open Scync", true, None::<&str>)?;
@@ -148,6 +124,10 @@ fn main() {
             if window.label() == MAIN_WINDOW {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
+                    let _ = window.hide();
+                }
+            } else if window.label() == QUICK_WINDOW {
+                if let WindowEvent::Focused(false) = event {
                     let _ = window.hide();
                 }
             }
